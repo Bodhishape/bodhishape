@@ -1,0 +1,36 @@
+{
+  "short_name": "BodhiShape",
+  "name": "BodhiShape - Corpo Forte. Mente Firme.",
+  "description": "Suando o Karma, Conquistando Vitórias - Conectando prática budista, saúde física, constância e apoio comunitário.",
+  "icons": [
+    {
+      "src": "/bodhishape_logo_1781108377890.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "/bodhishape_logo_1781108377890.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/bodhishape_logo_1781108377890.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "/bodhishape_logo_1781108377890.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#060713",
+  "theme_color": "#7922eb",
+  "display": "standalone",
+  "orientation": "portrait"
+}

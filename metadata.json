@@ -1,0 +1,6 @@
+{
+  "name": "BodhiShape",
+  "description": "Suando o Karma, Conquistando Vitórias - Conectando prática budista, saúde física, constância e apoio comunitário.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

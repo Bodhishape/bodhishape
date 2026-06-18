@@ -1,0 +1,210 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered practitioners profiles.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "avatar": { "type": "string" },
+        "city": { "type": "string" },
+        "state": { "type": "string" },
+        "division": { "type": "string" },
+        "organization": { "type": "string" },
+        "district": { "type": "string" },
+        "region": { "type": "string" },
+        "streak": { "type": "number" },
+        "lastActive": { "type": "string" },
+        "trialEnds": { "type": "string" },
+        "displayName": { "type": "string" },
+        "subDistrict": { "type": "string" },
+        "block": { "type": "string" },
+        "daimokuBalance": { "type": "number" },
+        "horizontalGroup": { "type": "string" },
+        "localGroup": { "type": "string" },
+        "horizontalGroupOfficial": { "type": "boolean" },
+        "height": { "type": "number" },
+        "initialWeight": { "type": "number" },
+        "currentWeight": { "type": "number" },
+        "targetWeight": { "type": "number" },
+        "weightHistory": { "type": "array" },
+        "bodyMeasurements": { "type": "object" },
+        "progressPhotos": { "type": "array" }
+      },
+      "required": ["id", "name", "email"]
+    },
+    "Activity": {
+      "title": "Activity",
+      "description": "Buddhist and training physical logged activities.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "type": { "type": "string" },
+        "category": { "type": "string" },
+        "subType": { "type": "string" },
+        "minutes": { "type": "number" },
+        "points": { "type": "number" },
+        "notes": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "location": { "type": "string" },
+        "distanceKm": { "type": "number" },
+        "calories": { "type": "number" },
+        "steps": { "type": "number" }
+      },
+      "required": ["id", "userId", "type", "points", "timestamp"]
+    },
+    "Post": {
+      "title": "Post",
+      "description": "Social feed publications.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userAvatar": { "type": "string" },
+        "userDivision": { "type": "string" },
+        "userRegion": { "type": "string" },
+        "content": { "type": "string" },
+        "image": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "reactions": { "type": "object" },
+        "comments": { "type": "array" },
+        "loggedActivities": { "type": "array" },
+        "pointsEarned": { "type": "number" },
+        "isPresenceOnly": { "type": "boolean" },
+        "streak": { "type": "number" }
+      },
+      "required": ["id", "userId", "userName", "content", "timestamp"]
+    },
+    "Goal": {
+      "title": "Goal",
+      "description": "Individual short-term and long-term milestones.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "deadline": { "type": "string" },
+        "progress": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "title", "deadline", "progress"]
+    },
+    "Community": {
+      "title": "Community",
+      "description": "Challenges and districts group structures.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "rules": { "type": "string" },
+        "creatorId": { "type": "string" },
+        "enabledActivities": { "type": "array" },
+        "membersCount": { "type": "number" },
+        "cover": { "type": "string" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "prize": { "type": "string" },
+        "privacy": { "type": "string" },
+        "invitedUsers": { "type": "array" },
+        "participants": { "type": "array" }
+      },
+      "required": ["id", "name", "creatorId", "enabledActivities"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Community dedicated chat message.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "communityId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userAvatar": { "type": "string" },
+        "content": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "image": { "type": "string" },
+        "reactions": { "type": "object" }
+      },
+      "required": ["id", "communityId", "userId", "userName", "content", "timestamp"]
+    },
+    "KofuRecord": {
+      "title": "KofuRecord",
+      "description": "Contributions monitor and tracking.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "campaignId": { "type": "string" },
+        "status": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "campaignId", "status"]
+    },
+    "BsSubscription": {
+      "title": "BsSubscription",
+      "description": "Brasil Seikyo subscriptions tracking.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "status": { "type": "string" },
+        "renewalDate": { "type": "string" },
+        "currentStreakMonths": { "type": "number" }
+      },
+      "required": ["userId", "status"]
+    },
+    "ActivePractitioner": {
+      "title": "ActivePractitioner",
+      "description": "Practitioners actively practicing Daimoku in real-time.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "lastHeartbeat": { "type": "number" }
+      },
+      "required": ["userId", "name", "lastHeartbeat"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Practioners primary documents"
+    },
+    "/activities/{activityId}": {
+      "schema": "Activity",
+      "description": "Actions and habits tracking logs"
+    },
+    "/posts/{postId}": {
+      "schema": "Post",
+      "description": "Central community feed messages and actions"
+    },
+    "/goals/{goalId}": {
+      "schema": "Goal",
+      "description": "Buddhist and health individual goals"
+    },
+    "/communities/{communityId}": {
+      "schema": "Community",
+      "description": "Custom challenges and district teams with rules"
+    },
+    "/communities/{communityId}/chat_messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "District challenge specific real-time feeds"
+    },
+    "/kofu/{kofuId}": {
+      "schema": "KofuRecord",
+      "description": "Buddhist finance contribution campaigns"
+    },
+    "/bs_subscription/{bsId}": {
+      "schema": "BsSubscription",
+      "description": "Brasil Seikyo subscriptions info"
+    },
+    "/active_practitioners/{practitionerId}": {
+      "schema": "ActivePractitioner",
+      "description": "Real-time Daimoku practitioners synchronization"
+    }
+  }
+}

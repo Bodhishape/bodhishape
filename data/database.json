@@ -1,0 +1,77 @@
+{
+  "users": [
+    {
+      "id": "user-sdvtv37y6",
+      "lastActive": "2026-06-15T15:55:45.057Z",
+      "horizontalGroup": "Taiga",
+      "avatar": "https://api.dicebear.com/7.x/pixel-art/svg?seed=Nara",
+      "daimokuBalance": 0,
+      "horizontalGroupOfficial": true,
+      "block": "Jardim Maranguape",
+      "localGroup": "",
+      "region": "RM Pernambuco Norte",
+      "displayName": "Nara",
+      "streak": 4,
+      "email": "nara.gabriela@gmail.com",
+      "district": "Olinda",
+      "organization": "Paulista",
+      "subDistrict": "Nordeste 1",
+      "city": "Paulista",
+      "trialEnds": "2026-07-15T14:35:22.175Z",
+      "division": "JS",
+      "state": "SP",
+      "name": "Nara Gabriela Almeida Lopes da Silva"
+    }
+  ],
+  "activities": [],
+  "posts": [],
+  "goals": [],
+  "communities": [
+    {
+      "id": "comm-nordeste1",
+      "startDate": "2026-06-01",
+      "creatorId": "system",
+      "description": "Sua determinação sincera com os companheiros de fardo hoje! Pequenas ações constroem o caráter de ferro.",
+      "participants": [
+        "user-1",
+        "user-2",
+        "user-3"
+      ],
+      "privacy": "public",
+      "enabledActivities": [
+        "gongyo",
+        "daimoku",
+        "exercise"
+      ],
+      "membersCount": 156,
+      "prize": "Certificado de Honra ao Mérito Soka-Shape",
+      "name": "Missão Nordeste 1",
+      "rules": "Pontuação baseada em: Gongyo, Daimoku e Exercícios.",
+      "endDate": "2026-08-31",
+      "cover": "https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?w=800"
+    }
+  ],
+  "kofu": [
+    {
+      "id": "user-sdvtv37y6_campanha_3_2026",
+      "updatedAt": "2026-06-15T14:35:22.175Z",
+      "status": "nao_realizado",
+      "userId": "user-sdvtv37y6",
+      "campaignId": "campanha_3_2026"
+    }
+  ],
+  "bs_subscription": [
+    {
+      "id": "user-sdvtv37y6",
+      "status": "nao_assinante",
+      "currentStreakMonths": 0,
+      "renewalDate": "",
+      "userId": "user-sdvtv37y6"
+    }
+  ],
+  "chats": [],
+  "system_config": {
+    "trialStartDate": "2026-06-16T14:51:39.304Z"
+  },
+  "stories": []
+}

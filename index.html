@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BodhiShape — Corpo Forte. Mente Firme. Missão Maior.</title>
+    
+    <!-- Prevent all WebView/browser caching to force instant updates of password-free screens -->
+    <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="pragma" content="no-cache" />
+    <meta http-equiv="expires" content="0" />
+    
+    <!-- Professional Branding & PWA Configuration -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/png" href="/bodhishape_logo_1781108377890.png" />
+    <link rel="apple-touch-icon" href="/bodhishape_logo_1781108377890.png" />
+    <meta name="theme-color" content="#7922eb" />
+    <meta name="description" content="Suando o Karma, Conquistando Vitórias! Conectando prática do Budismo de Nichiren Daishonin (BSGI), saúde física, constância diária e incentivo comunitário assistido." />
+    
+    <!-- Mobile Standalone Web App Meta tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="BodhiShape" />
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then((reg) => console.log('[PWA SW] Registrado com sucesso!', reg.scope))
+            .catch((err) => console.error('[PWA SW] Erro ao registrar:', err));
+        });
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

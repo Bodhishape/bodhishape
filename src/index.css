@@ -1,0 +1,102 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  
+  --color-bodhi-purple: #7922eb;
+  --color-bodhi-pink: #eb228d;
+  --color-bodhi-magenta: #eb228d;
+  --color-bodhi-green: #84db15;
+  
+  --color-soka-blue: #7922eb;
+  --color-soka-orange: #eb228d;
+  --color-soka-gold: #84db15;
+  --color-soka-pink: #eb228d;
+  --color-soka-purple: #7922eb;
+  --color-soka-green: #84db15;
+  --color-dark-bg: #060713;
+  --color-dark-card: #0c0d21;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #060713;
+  color: #f8fafc;
+  background-image: 
+    radial-gradient(circle at 15% 15%, rgba(121, 34, 235, 0.15) 0%, transparent 50%),
+    radial-gradient(circle at 85% 85%, rgba(235, 34, 141, 0.12) 0%, transparent 50%),
+    radial-gradient(circle at 50% 50%, rgba(132, 219, 21, 0.03) 0%, transparent 60%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbars for a premium dark feel */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0e1322;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #252e46;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #394668;
+}
+
+.font-heading {
+  font-family: var(--font-heading);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* Accessibility High Contrast overrides */
+.accessibility-high-contrast {
+  background-color: #000000 !important;
+  background-image: none !important;
+  color: #ffffff !important;
+}
+
+.accessibility-high-contrast * {
+  border-color: #ffffff !important;
+}
+
+.accessibility-high-contrast input,
+.accessibility-high-contrast select,
+.accessibility-high-contrast textarea,
+.accessibility-high-contrast button {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+  border: 1px solid #ffffff !important;
+}
+
+.accessibility-high-contrast a,
+.accessibility-high-contrast p,
+.accessibility-high-contrast span,
+.accessibility-high-contrast h1,
+.accessibility-high-contrast h2,
+.accessibility-high-contrast h3,
+.accessibility-high-contrast h4,
+.accessibility-high-contrast h5,
+.accessibility-high-contrast h6 {
+  color: #ffffff !important;
+  text-shadow: none !important;
+}
+
+.accessibility-high-contrast .shadow,
+.accessibility-high-contrast .shadow-md,
+.accessibility-high-contrast .shadow-lg,
+.accessibility-high-contrast .shadow-xl {
+  box-shadow: none !important;
+}
+
