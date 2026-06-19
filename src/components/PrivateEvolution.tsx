@@ -81,6 +81,25 @@ export default function PrivateEvolution({
     setTimeout(() => setToastMessage(null), 4000);
   };
 
+  const [personalAiIncentive, setPersonalAiIncentive] = useState<string>("");
+  const [loadingAiIncentive, setLoadingAiIncentive] = useState<boolean>(false);
+
+  const generatePersonalIncentive = async () => {
+    if (!currentUser) return;
+    try {
+      setLoadingAiIncentive(true);
+      const res = await fetch(`/api/ai-incentive?userId=${currentUser.id}`);
+      const data = await res.json();
+      if (data.quote) {
+        setPersonalAiIncentive(data.quote);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingAiIncentive(false);
+    }
+  };
+
   // Physical form fields synced with currentUser or local state fallback
   const [height, setHeight] = useState<number>(currentUser?.height || 0);
   const [initialWeight, setInitialWeight] = useState<number>(currentUser?.initialWeight || 0);
@@ -1030,6 +1049,26 @@ export default function PrivateEvolution({
                           </div>
                         );
                       })}
+                    </div>
+
+                    {/* Personalized dynamic Gemini quote */}
+                    <div className="mt-4 pt-4 border-t border-slate-800/80 space-y-3">
+                      <button
+                        onClick={generatePersonalIncentive}
+                        disabled={loadingAiIncentive}
+                        className="w-full py-2 px-3 bg-gradient-to-r from-[#eb228d] to-[#6366f1] hover:from-[#eb228d]/90 hover:to-[#6366f1]/90 active:scale-[0.98] transition-all rounded-xl text-[11px] font-black tracking-wider uppercase text-white flex items-center justify-center gap-1.5 shadow cursor-pointer"
+                      >
+                        <Sparkles className={`w-3.5 h-3.5 ${loadingAiIncentive ? "animate-spin" : ""}`} />
+                        {loadingAiIncentive ? "Invocando sabedoria..." : "Incentivo Especial da IA Bodhi"}
+                      </button>
+
+                      {personalAiIncentive && (
+                        <div className="p-3.5 rounded-xl border border-indigo-900/40 bg-indigo-955/15 text-indigo-300 animate-fade-in text-[11.5px] leading-relaxed relative overflow-hidden text-left">
+                          <span className="text-xl font-bold font-serif leading-none absolute -top-1 -left-1 text-indigo-500/10 pointer-events-none">“</span>
+                          <p className="italic font-medium">{personalAiIncentive}</p>
+                          <span className="text-xs uppercase tracking-widest font-black text-slate-550 block mt-2 text-right">🤖 IA Bodhi</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 

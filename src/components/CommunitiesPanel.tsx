@@ -333,14 +333,14 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
     const code = inviteCodeInput.trim().toUpperCase();
 
     // Check code matches models
-    const trialCodes: Record<string, string> = {
+    const accessCodes: Record<string, string> = {
       "SHAPE25": "model-community",
       "STUDY7": "comm-kotekitai",
       "KOFURRECIFE": "comm-dfrecife",
       "NORDESTE2": "comm-nordeste2"
     };
 
-    const targetId = trialCodes[code];
+    const targetId = accessCodes[code];
     const targetChallenge = localCommunities.find(c => 
       c.id === targetId || 
       c.id.toUpperCase() === code || 

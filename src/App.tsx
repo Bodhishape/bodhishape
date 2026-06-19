@@ -58,6 +58,8 @@ import Onboarding from "./components/Onboarding";
 import MuseumOfTheJourney from "./components/MuseumOfTheJourney";
 import AgendaPanel from "./components/AgendaPanel";
 
+const DEFAULT_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'><rect width='128' height='128' fill='%231e293b'/><circle cx='64' cy='48' r='24' fill='%236366f1'/><path d='M28,104 C28,80 44,72 64,72 C84,72 100,80 100,104' fill='%236366f1'/></svg>";
+
 export default function App() {
   // Authentication & Switching states (moved to top to prevent temporal dead zone)
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -579,7 +581,7 @@ export default function App() {
         name: registerName.trim(),
         displayName: registerDisplayName.trim(),
         email: registerEmail.trim().toLowerCase(),
-        avatar: registerAvatarUrl.trim() || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${encodeURIComponent(registerDisplayName.trim())}`,
+        avatar: registerAvatarUrl.trim() || DEFAULT_AVATAR,
         city: registerCity.trim() || "São Paulo",
         state: "SP",
         division: registerDivision,
@@ -656,7 +658,8 @@ export default function App() {
     try {
       setLoading(true);
       // Fetch users
-      const usersRes = await fetch("/api/users");
+      const targetUid = userIdOverride || currentUser?.id;
+      const usersRes = await fetch("/api/users" + (targetUid ? `?userId=${targetUid}` : ""));
       const usersData = await usersRes.json();
       setUsers(usersData);
 
@@ -822,7 +825,7 @@ export default function App() {
         name: registerName.trim() || registerDisplayName.trim(),
         displayName: registerDisplayName.trim(),
         email: registerEmail.toLowerCase(),
-        avatar: registerAvatarUrl.trim() || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${encodeURIComponent(registerDisplayName.trim())}`,
+        avatar: registerAvatarUrl.trim() || DEFAULT_AVATAR,
         city: registerCity || "Recife",
         state: "PE",
         division: registerDivision,
@@ -1783,7 +1786,7 @@ export default function App() {
                             id: Math.random().toString(36).substring(2, 9),
                             userId: currentUser?.id || "999",
                             userName: currentUser?.displayName || currentUser?.name || "BodhiShaper",
-                            userAvatar: currentUser?.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde",
+                            userAvatar: currentUser?.avatar || DEFAULT_AVATAR,
                             content: `Completou uma sessão de Caminhada de 40 minutos, importada e sincronizada de forma inteligente de seu relógio conectado! Cuidar da saúde física do Bodhi é primordial! 💪✨`,
                             timestamp: new Date().toISOString(),
                             feedGroup: "all",
@@ -3578,7 +3581,7 @@ export default function App() {
                       />
                     </div>
                     <div>
-                      <h2 className="text-lg font-black text-slate-100 font-heading">BodhiShape Premium</h2>
+                      <h2 className="text-lg font-black text-slate-100 font-heading">BodhiShape (100% Gratuito)</h2>
                       <p className="text-[11px] text-slate-400 font-mono tracking-widest uppercase mt-0.5">
                         Versão 2.1.0 Mobile-Optimized
                       </p>
@@ -3668,7 +3671,7 @@ export default function App() {
               <div className="px-5 pb-5 pt-1 space-y-5 max-h-[85vh] overflow-y-auto">
                 <div className="flex flex-col items-center -mt-14 text-center space-y-2">
                   <img
-                    src={selectedPublicUser.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150"}
+                    src={selectedPublicUser.avatarUrl || selectedPublicUser.avatar || DEFAULT_AVATAR}
                     alt={selectedPublicUser.displayName || selectedPublicUser.name}
                     className="w-20 h-20 rounded-full border-4 border-[#0D101E] object-cover bg-slate-950 shadow-xl"
                   />

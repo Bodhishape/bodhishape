@@ -35,7 +35,7 @@ export default function BodhiLives({ currentUser }: { currentUser: User | null }
     const introMsg: LiveChatMsg = {
       id: "system-moderator-intro",
       userName: "Moderador BodhiShape",
-      userAvatar: "https://api.dicebear.com/7.x/bottts/svg?seed=SystemMod",
+      userAvatar: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'><rect width='128' height='128' fill='%230f172a'/><circle cx='64' cy='64' r='40' fill='none' stroke='%2338bdf8' stroke-width='4'/><rect x='44' y='50' width='40' height='24' rx='4' fill='%2338bdf8'/><circle cx='54' cy='62' r='3' fill='%230f172a'/><circle cx='74' cy='62' r='3' fill='%230f172a'/><path d='M54,80 Q64,88 74,80' stroke='%2338bdf8' stroke-width='3' fill='none'/></svg>",
       content: "Seja bem-vindo(a) ao canal de transmissão! Envie suas mensagens abaixo para interagir em tempo real.",
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       badge: "Staff"

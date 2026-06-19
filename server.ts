@@ -22,6 +22,7 @@ setLogLevel("silent");
 const app = express();
 const PORT = 3000;
 const DB_FILE = path.join(process.cwd(), "data", "database.json");
+const DEFAULT_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'><rect width='128' height='128' fill='%231e293b'/><circle cx='64' cy='48' r='24' fill='%236366f1'/><path d='M28,104 C28,80 44,72 64,72 C84,72 100,80 100,104' fill='%236366f1'/></svg>";
 
 // Ensure data folder exists
 if (!fs.existsSync(path.join(process.cwd(), "data"))) {
@@ -435,6 +436,36 @@ function writeDB(data: any) {
   }
 }
 
+// Helper to reliably update and calculate user active streaks without double-login inflation
+function updateAndCalculateUserStreak(user: any, dbData: any, logTimestamp?: string) {
+  if (!user) return;
+
+  const todayStr = (logTimestamp || new Date().toISOString()).split("T")[0];
+
+  // If there's no streak or lastActive, initialize as 1
+  if (user.streak === undefined || user.streak === null || user.streak === 0 || !user.lastActive) {
+    user.streak = 1;
+    return;
+  }
+
+  const lastActiveStr = user.lastActive.split("T")[0];
+
+  const d1 = new Date(todayStr);
+  const d2 = new Date(lastActiveStr);
+  const utc1 = Date.UTC(d1.getUTCFullYear(), d1.getUTCMonth(), d1.getUTCDate());
+  const utc2 = Date.UTC(d2.getUTCFullYear(), d2.getUTCMonth(), d2.getUTCDate());
+  const diffDays = Math.round((utc1 - utc2) / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 1) {
+    // Yesterday: increment streak correctly
+    user.streak = (user.streak || 0) + 1;
+  } else if (diffDays > 1) {
+    // Broken streak (more than 1 day has passed without activity): reset to 1
+    user.streak = 1;
+  }
+  // If diffDays === 0 (same day), we keep user.streak exactly as it is (no double counting or resetting)
+}
+
 app.use(express.json({ limit: "150mb" }));
 app.use(express.urlencoded({ limit: "150mb", extended: true }));
 
@@ -583,11 +614,20 @@ function rateLimiter(req: any, res: any, next: any) {
 
 app.use(rateLimiter);
 
-// API endpoints
-// Get list of users with stats computed
+// Get list of users with stats computed (email stripped for public, kept only for matching requested authenticated user)
 app.get("/api/users", (req, res) => {
   const dbData = readDB();
-  res.json(dbData.users);
+  const requesterId = req.query.userId || req.headers["x-user-id"];
+  
+  const publicUsers = (dbData.users || []).map((u: any) => {
+    if (requesterId && u.id === requesterId) {
+      return u;
+    }
+    const { email, ...rest } = u;
+    return rest;
+  });
+  
+  res.json(publicUsers);
 });
 
 // Auth / Login-Register route (Simplificado/Sem Senhas)
@@ -621,7 +661,7 @@ app.post("/api/auth/login-register", (req, res) => {
     const safeHorizontalGroup = sanitizeInput(horizontalGroup || "");
     const safeLocalGroup = sanitizeInput(localGroup || "");
 
-    const finalAvatar = avatar || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${encodeURIComponent(safeDisplayName || email)}`;
+    const finalAvatar = avatar || DEFAULT_AVATAR;
     user = {
       id: "user-" + Math.random().toString(36).substr(2, 9),
       name: safeName,
@@ -665,18 +705,10 @@ app.post("/api/auth/login-register", (req, res) => {
       console.error("[EMAIL SYSTEM] Legacy registration email trigger error:", err);
     });
   } else {
-    // Usuário existente reconhecido: Restaurar perfil e atualizar streak
-    const lastActiveDate = new Date(user.lastActive);
-    const today = new Date();
-    const diffTime = Math.abs(today.getTime() - lastActiveDate.getTime());
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    
-    if (diffDays === 1) {
-      user.streak += 1;
-    } else if (diffDays > 1) {
-      user.streak = 1;
-    }
-    user.lastActive = new Date().toISOString();
+    // Usuário existente reconhecido: Restaurar perfil e atualizar streak sem double-login inflation
+    const logTimestamp = new Date().toISOString();
+    updateAndCalculateUserStreak(user, dbData, logTimestamp);
+    user.lastActive = logTimestamp;
     writeDB(dbData);
   }
 
@@ -697,9 +729,7 @@ app.post("/api/auth/login", (req, res) => {
 
   const dbData = readDB();
   const user = dbData.users.find((u: any) => 
-    u.email.toLowerCase() === email.toLowerCase() ||
-    (email.toLowerCase() === "nara.gabriela@gmail.com" && u.id === "user-sdvtv37y6") ||
-    (email.toLowerCase() === "silvalopesnara24@gmail.com" && u.id === "user-sdvtv37y6")
+    u.email.toLowerCase() === email.toLowerCase()
   );
 
   if (!user) {
@@ -708,18 +738,10 @@ app.post("/api/auth/login", (req, res) => {
     });
   }
 
-  // Restore profile state and update streak naturally
-  const lastActiveDate = new Date(user.lastActive || Date.now());
-  const today = new Date();
-  const diffTime = Math.abs(today.getTime() - lastActiveDate.getTime());
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-  if (diffDays === 1) {
-    user.streak += 1;
-  } else if (diffDays > 1) {
-    user.streak = 1;
-  }
-  user.lastActive = new Date().toISOString();
+  // Restore profile state and update streak naturally without double-login inflation
+  const logTimestamp = new Date().toISOString();
+  updateAndCalculateUserStreak(user, dbData, logTimestamp);
+  user.lastActive = logTimestamp;
   writeDB(dbData);
 
   res.json(user);
@@ -774,7 +796,7 @@ app.post("/api/auth/register", (req, res) => {
   const safeBlock = sanitizeInput(block || "");
   const safeHorizontalGroup = sanitizeInput(horizontalGroup || "");
 
-  const finalAvatar = avatar || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${encodeURIComponent(safeDisplayName || email)}`;
+  const finalAvatar = avatar || DEFAULT_AVATAR;
   const user = {
     id: "user-" + Math.random().toString(36).substr(2, 9),
     name: safeName,
@@ -1197,12 +1219,9 @@ app.post("/api/activities/log", async (req, res) => {
   };
   dbData.activities.push(newActivity);
 
-  // Update user last active and streak
+  // Update user last active and streak dynamically with the new logic
+  updateAndCalculateUserStreak(user, dbData, logTimestamp);
   user.lastActive = logTimestamp;
-  // Ensure streak is maintained or set if missing
-  if (user.streak === undefined || user.streak === 0) {
-    user.streak = 1;
-  }
   
   // Format content for social feed post
   let postContent = "";
@@ -1422,21 +1441,9 @@ app.post("/api/activities/log-combined", async (req, res) => {
     lines.push(exLine);
   }
 
-  // Update user active stats
+  // Update user active stats and streak dynamically with the new logic
+  updateAndCalculateUserStreak(user, dbData, logTimestamp);
   user.lastActive = logTimestamp;
-  if (user.streak === undefined || user.streak === 0) {
-    user.streak = 1;
-  } else {
-    const lastActiveDate = new Date(user.lastActive);
-    const today = new Date();
-    const diffTime = Math.abs(today.getTime() - lastActiveDate.getTime());
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    if (diffDays === 1) {
-      user.streak += 1;
-    } else if (diffDays > 1) {
-      user.streak = 1;
-    }
-  }
 
   // 1. Calculate Current Leaderboard metrics for contextual comments
   const allUserPoints = dbData.users.map((u: any) => {
@@ -1663,7 +1670,7 @@ app.post("/api/stories", (req, res) => {
     id: "story-" + Math.random().toString(36).substr(2, 9),
     userId,
     userName: sanitizeInput(userName) || "Praticante",
-    userAvatar: userAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150",
+    userAvatar: userAvatar || DEFAULT_AVATAR,
     category: category || "beneficio",
     title: sanitizeInput(title),
     content: sanitizeInput(content),
@@ -1723,7 +1730,7 @@ app.post("/api/stories/:storyId/comment", (req, res) => {
   const newComment = {
     id: "comment-" + Math.random().toString(36).substr(2, 9),
     userName: userName || "Praticante Soka",
-    userAvatar: userAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150",
+    userAvatar: userAvatar || DEFAULT_AVATAR,
     content: sanitizeInput(content),
     timestamp: new Date().toISOString()
   };
@@ -2276,22 +2283,61 @@ app.post("/api/bs", (req, res) => {
   res.json(bsRecord);
 });
 
-// Gets collective testing trial status (ends in 30 days)
+// Gets collective testing trial status - BodhiShape is 100% free, so we return deactivated trial flags
 app.get("/api/trial-status", (req, res) => {
-  const dbData = readDB();
-  const startDate = new Date(dbData.system_config?.trialStartDate || new Date().toISOString());
-  const endDate = new Date(startDate.getTime() + 30 * 86400000); // 30 days later
-  const now = new Date();
-  
-  const totalDays = 30;
-  const msRem = endDate.getTime() - now.getTime();
-  const daysRem = Math.max(0, Math.ceil(msRem / (1000 * 60 * 60 * 24)));
-  
   res.json({
-    trialActive: msRem > 0,
-    daysRemaining: daysRem,
-    trialEndDate: endDate.toISOString()
+    trialActive: false,
+    daysRemaining: 9999,
+    trialEndDate: ""
   });
+});
+
+// A1 Personalized AI Encouragement Quote generator using server-side Gemini
+app.get("/api/ai-incentive", async (req, res) => {
+  const { userId } = req.query;
+  if (!userId) {
+    return res.status(400).json({ error: "userId é obrigatório" });
+  }
+
+  const dbData = readDB();
+  const user = dbData.users.find((u: any) => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: "Usuário não encontrado" });
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  let quote = "";
+
+  if (apiKey && apiKey !== "MY_GEMINI_API_KEY") {
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const prompt = `
+        Gere uma pequena mensagem personalizada de incentivo espiritual e físico para o usuário "${user.displayName || user.name}".
+        Ele é da divisão "${user.division}" da BSGI e reside em "${user.city}/${user.state}".
+        Ele está com uma sequência ativa (streak) de ${user.streak || 1} dias consecutivos!
+        A mensagem deve ter no máximo 2 frases curtas, focar na superação diária através do Daimoku (determinação mental) e do Shape (disciplina corporal).
+        Use o tom clássico e amigável dos veteranos da BSGI. NÃO inclua aspas, títulos ou markdown.
+      `;
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+      });
+      quote = response.text?.trim() || "";
+    } catch (e) {
+      console.error("Erro ao gerar incentivo da IA:", e);
+    }
+  }
+
+  if (!quote) {
+    const fallbacks = [
+      `Daimoku com determinação gera a força real que nenhum treino pesado consegue explicar. Continue firme com sua sequência de ${user.streak || 1} dias, ${user.displayName || "Bodhishaper"}!`,
+      `Vitória hoje, vitória amanhã! Lapidar o espírito pelo Daimoku matinal prepara o corpo para vencer qualquer limite físico. Avante!`,
+      `Suando o carma e lapidando o espírito! Cada passo na corrida e minuto de recitação constroem uma existência feliz e inabalável.`
+    ];
+    quote = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+  }
+
+  res.json({ quote });
 });
 
 // REMINDERS & AGENDA REST ENDPOINTS

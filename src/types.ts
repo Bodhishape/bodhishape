@@ -9,6 +9,7 @@ export interface User {
   displayName?: string;
   email: string;
   avatar: string;
+  avatarUrl?: string;
   city: string;
   state: string;
   division: "DS" | "DF" | "JS"; // DS = Sênior, DF = Feminina, JS = Juventude Soka
@@ -18,7 +19,7 @@ export interface User {
   subDistrict?: string;
   streak: number;
   lastActive: string;
-  trialEnds: string;
+  trialEnds?: string;
   daimokuBalance?: number;
   horizontalGroup?: string;       // e.g. "Fukuchi", "Taiga"
   localGroup?: string;            // e.g. "Grupo de Dança da DF", "Taiga Recife Norte"

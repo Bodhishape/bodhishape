@@ -113,7 +113,7 @@ export default function MuralVitorias({ currentUser, onSelectUser }: MuralVitori
           const aiCommentObj = {
             id: `c-ai-${Date.now()}`,
             userName: "🤖 IA Pública de Incentivo",
-            userAvatar: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=150",
+            userAvatar: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'><rect width='128' height='128' fill='%231e1b4b'/><circle cx='64' cy='64' r='40' fill='none' stroke='%2338bdf8' stroke-width='4'/><rect x='44' y='50' width='40' height='24' rx='4' fill='%2338bdf8'/><circle cx='54' cy='62' r='3' fill='%231e1b4b'/><circle cx='74' cy='62' r='3' fill='%231e1b4b'/><path d='M54,80 Q64,88 74,80' stroke='%2338bdf8' stroke-width='3' fill='none'/></svg>",
             content: chosenPhrase,
             isAI: true,
             timestamp: new Date().toISOString()

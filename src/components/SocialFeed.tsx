@@ -1394,7 +1394,9 @@ export default function SocialFeed({
                       {post.comments.map((comm) => {
                         const commUser = allUsers?.find(u => u.id === comm.userId);
                         const commName = comm.isAI ? comm.userName : (commUser ? (commUser.displayName || commUser.name) : comm.userName);
-                        const commAvatar = comm.isAI ? (comm.userAvatar || "https://api.dicebear.com/7.x/bottts/svg") : (commUser ? commUser.avatar : comm.userAvatar);
+                        const commAvatar = comm.isAI 
+                          ? (comm.userAvatar || "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'><rect width='128' height='128' fill='%2378350f'/><circle cx='64' cy='64' r='40' fill='none' stroke='%23f59e0b' stroke-width='4'/><rect x='44' y='50' width='40' height='24' rx='4' fill='%23f59e0b'/><circle cx='54' cy='62' r='3' fill='%2378350f'/><circle cx='74' cy='62' r='3' fill='%2378350f'/><path d='M54,80 Q64,88 74,80' stroke='%23f59e0b' stroke-width='3' fill='none'/></svg>") 
+                          : (commUser ? (commUser.avatarUrl || commUser.avatar) : (comm.userAvatar || "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'><rect width='128' height='128' fill='%231e293b'/><circle cx='64' cy='48' r='24' fill='%236366f1'/><path d='M28,104 C28,80 44,72 64,72 C84,72 100,80 100,104' fill='%236366f1'/></svg>"));
 
                         return (
                           <div

@@ -534,7 +534,7 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
             <div className="flex flex-col items-center gap-3 p-3.5 bg-slate-950/40 rounded-xl border border-slate-850">
               <div className="relative">
                 <img 
-                  src={editAvatar || "https://api.dicebear.com/7.x/pixel-art/svg?seed=default"} 
+                  src={editAvatar || "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'><rect width='128' height='128' fill='%231e293b'/><circle cx='64' cy='48' r='24' fill='%236366f1'/><path d='M28,104 C28,80 44,72 64,72 C84,72 100,80 100,104' fill='%236366f1'/></svg>"} 
                   alt="Preview" 
                   className="w-16 h-16 rounded-full border-2 border-indigo-500/40 object-cover shadow-lg"
                   referrerPolicy="no-referrer"
