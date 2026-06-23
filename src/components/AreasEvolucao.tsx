@@ -378,14 +378,44 @@ export default function AreasEvolucao({ currentUser }: AreasEvolucaoProps) {
             </h3>
             
             <div className="space-y-2.5 text-xs">
-              <div className="p-3 bg-slate-950/60 border border-slate-850 rounded-lg flex items-center justify-between">
-                <span className="text-slate-400">🔥 7 dias sem refrigerante</span>
-                <span className="text-[10px] bg-emerald-505/10 border border-emerald-505/20 text-emerald-400 px-1.5 py-0.5 rounded font-bold">Excelente</span>
-              </div>
-              <div className="p-3 bg-slate-950/60 border border-slate-850 rounded-lg flex items-center justify-between">
-                <span className="text-slate-400">🔥 30 dias sem tabaco rascunhado</span>
-                <span className="text-[10px] bg-indigo-505/10 border border-indigo-505/20 text-indigo-400 px-1.5 py-0.5 rounded font-bold">Inabalável</span>
-              </div>
+              {(() => {
+                const activeStreaks = habits
+                  .map(h => ({ habit: h, streak: calculateAvoidedStreak(h) }))
+                  .filter(item => item.streak > 0);
+
+                if (activeStreaks.length === 0) {
+                  return (
+                    <div className="text-center py-4 text-slate-500 italic">
+                      Nenhuma sequência de auto-controle ativa no momento.
+                      <p className="text-[10px] mt-1 text-slate-600 not-italic">
+                        Marque um hábito como "Evitado" no painel para iniciar sua sequência.
+                      </p>
+                    </div>
+                  );
+                }
+
+                return activeStreaks.map(({ habit, streak }) => {
+                  let badge = "Iniciante";
+                  let badgeClass = "bg-slate-500/10 border-slate-500/20 text-slate-400";
+                  if (streak >= 30) {
+                    badge = "Inabalável";
+                    badgeClass = "bg-indigo-500/10 border-indigo-505/20 text-indigo-400";
+                  } else if (streak >= 15) {
+                    badge = "Poderoso";
+                    badgeClass = "bg-amber-500/10 border-amber-505/20 text-amber-400";
+                  } else if (streak >= 7) {
+                    badge = "Excelente";
+                    badgeClass = "bg-emerald-500/10 border-emerald-505/20 text-emerald-400";
+                  }
+
+                  return (
+                    <div key={habit.id} className="p-3 bg-slate-950/60 border border-slate-850 rounded-lg flex items-center justify-between">
+                      <span className="text-slate-400">🔥 {streak} {streak === 1 ? "dia" : "dias"} sem {habit.name.replace(/^(🍺|🍬|🍔|🥤|🚬|📱|😴|💸|😡|📵|⚠️)\s*/, "").toLowerCase()}</span>
+                      <span className={`text-[10px] border px-1.5 py-0.5 rounded font-bold ${badgeClass}`}>{badge}</span>
+                    </div>
+                  );
+                });
+              })()}
               <div className="p-2 bg-indigo-950/20 border border-indigo-900/30 text-[10px] text-indigo-205 rounded-lg leading-relaxed text-center">
                 Mantenha seu ritmo privado saudável para inspirar sua própria sabedoria oculta.
               </div>

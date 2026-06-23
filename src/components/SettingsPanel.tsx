@@ -12,9 +12,11 @@ interface SettingsPanelProps {
   onUpdateUser?: (updated: User) => void;
   onLogout?: () => void;
   onInstallApp?: () => void;
+  users?: User[];
+  firebaseAuth?: any;
 }
 
-export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onInstallApp }: SettingsPanelProps) {
+export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onInstallApp, users, firebaseAuth }: SettingsPanelProps) {
   // Profile editing states
   const [editName, setEditName] = useState(currentUser?.name || "");
   const [editDisplayName, setEditDisplayName] = useState(currentUser?.displayName || "");
@@ -26,6 +28,8 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
   const [editSub, setEditSub] = useState(currentUser?.subDistrict || "");
   const [editRegion, setEditRegion] = useState(currentUser?.region || "");
   const [editBirthdate, setEditBirthdate] = useState(currentUser?.birthdate || "");
+  const [height, setHeight] = useState(currentUser?.height || 0);
+  const [currentWeight, setCurrentWeight] = useState(currentUser?.currentWeight || 0);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isUploadingSettingsAvatar, setIsUploadingSettingsAvatar] = useState(false);
   
@@ -41,9 +45,14 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
       const reader = new FileReader();
       reader.onloadend = async () => {
         try {
+          const uploadHeaders: Record<string, string> = { "Content-Type": "application/json" };
+          if (firebaseAuth?.currentUser) {
+            const idToken = await firebaseAuth.currentUser.getIdToken();
+            uploadHeaders["Authorization"] = `Bearer ${idToken}`;
+          }
           const res = await fetch("/api/upload", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: uploadHeaders,
             body: JSON.stringify({
               image: reader.result,
               name: file.name
@@ -56,7 +65,7 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
             // Auto-commit uploaded avatar to backend database immediately to ensure persistent saving
             const saveRes = await fetch("/api/users/update", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: uploadHeaders,
               body: JSON.stringify({
                 userId: currentUser.id,
                 avatar: data.url,
@@ -110,6 +119,8 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
       setEditSub(currentUser.subDistrict || "");
       setEditRegion(currentUser.region || "");
       setEditBirthdate(currentUser.birthdate || "");
+      setHeight(currentUser.height || 0);
+      setCurrentWeight(currentUser.currentWeight || 0);
       if (currentUser.accessibility) {
         setScreenReader(currentUser.accessibility.screenReader || "simplified");
         setFontSize(currentUser.accessibility.fontSize || "medium");
@@ -125,9 +136,14 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
     setIsSavingProfile(true);
 
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (firebaseAuth?.currentUser) {
+        const idToken = await firebaseAuth.currentUser.getIdToken();
+        headers["Authorization"] = `Bearer ${idToken}`;
+      }
       const res = await fetch("/api/users/update", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: headers,
         body: JSON.stringify({
           userId: currentUser.id,
           name: editName.trim(),
@@ -139,7 +155,9 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
           district: editDistrict.trim(),
           subDistrict: editSub.trim(),
           region: editRegion,
-          birthdate: editBirthdate
+          birthdate: editBirthdate,
+          height: height || null,
+          currentWeight: currentWeight || null
         })
       });
 
@@ -179,9 +197,14 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
         setPushEnabled(true);
 
         try {
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (firebaseAuth?.currentUser) {
+            const idToken = await firebaseAuth.currentUser.getIdToken();
+            headers["Authorization"] = `Bearer ${idToken}`;
+          }
           const res = await fetch("/api/users/update", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: headers,
             body: JSON.stringify({
               userId: currentUser.id,
               pushEnabled: true,
@@ -209,9 +232,14 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
     } else {
       setPushEnabled(false);
       try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (firebaseAuth?.currentUser) {
+          const idToken = await firebaseAuth.currentUser.getIdToken();
+          headers["Authorization"] = `Bearer ${idToken}`;
+        }
         const res = await fetch("/api/users/update", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: headers,
           body: JSON.stringify({
             userId: currentUser.id,
             pushEnabled: false,
@@ -288,13 +316,13 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
   };
 
   // Theme state
-  const [theme, setTheme] = useState(() => localStorage.getItem("bodhishape_theme") || "escuro");
+  const [theme, setTheme] = useState(() => currentUser?.theme || localStorage.getItem("bodhishape_theme") || "escuro");
   
   // Language state
-  const [lang, setLang] = useState(() => localStorage.getItem("bodhishape_lang") || "portuguese");
+  const [lang, setLang] = useState(() => currentUser?.lang || localStorage.getItem("bodhishape_lang") || "portuguese");
 
   // Social handles state
-  const [socials, setSocials] = useState({
+  const [socials, setSocials] = useState(() => currentUser?.socials || {
     instagram: "@bodhishaper_soka",
     facebook: "fb.com/bodhishape",
     tiktok: "@shapebuddy",
@@ -303,12 +331,31 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
     threads: "@bodhishape"
   });
 
-  // Devices state with animated disconnect
-  const [devices, setDevices] = useState([
-    { id: "dev-1", name: "iPhone 15 Pro Max", type: "iPhone", location: "São Paulo, BR", lastActive: "Ativo agora" },
-    { id: "dev-2", name: "Xiaomi Redmi Note 12", type: "Android", location: "Ceará, BR", lastActive: "Há 4 horas" },
-    { id: "dev-3", name: "Chrome - macOS Sequoia", type: "Navegador", location: "São Paulo, BR", lastActive: "Há 2 dias" }
-  ]);
+  // Devices state representing the current actual connection cleanly and honestly
+  const [devices, setDevices] = useState(() => {
+    const ua = navigator.userAgent;
+    let browserName = "Chrome";
+    if (ua.includes("Firefox")) browserName = "Firefox";
+    else if (ua.includes("Safari") && !ua.includes("Chrome")) browserName = "Safari";
+    else if (ua.includes("Edge")) browserName = "Edge";
+
+    let osName = "Navegador";
+    if (ua.includes("Windows")) osName = "Windows";
+    else if (ua.includes("Mac")) osName = "macOS";
+    else if (ua.includes("Linux")) osName = "Linux";
+    else if (ua.includes("Android")) osName = "Android OS";
+    else if (ua.includes("iPhone") || ua.includes("iPad")) osName = "iOS Device";
+
+    return [
+      { 
+        id: "current-dev", 
+        name: `${browserName} - ${osName} (Sua sessão atual)`, 
+        type: "Navegador", 
+        location: "Conectado", 
+        lastActive: "Ativo agora" 
+      }
+    ];
+  });
 
   // Help & feedback submission states
   const [helpType, setHelpType] = useState<"erro" | "sugestao" | "melhoria">("sugestao");
@@ -316,47 +363,38 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
   const [feedbackSuccess, setFeedbackSuccess] = useState(false);
 
   // Community State Dynamic Initializer
-  const [myCommunities, setMyCommunities] = useState(() => {
-    const list = [
-      { id: "c2", name: "Vila Mariana Gymrats", members: 128, role: "Membro Ativo Soka" }
-    ];
-    if (currentUser?.organization) {
-      list.unshift({
-        id: "c-user-org",
-        name: currentUser.organization,
-        members: 42,
-        role: "Integrante Oficial"
-      });
-    } else {
-      list.unshift({
-        id: "c1",
-        name: "Distrito Sol Nascente - CE",
-        members: 42,
-        role: "Integrante Oficial"
-      });
-    }
-    return list;
-  });
+  const [myCommunities, setMyCommunities] = useState<any[]>([]);
 
   // Sync communities list on profile/organization updates
   React.useEffect(() => {
-    if (currentUser?.organization) {
-      setMyCommunities(prev => {
-        const withoutOrg = prev.filter(c => c.id !== "c-user-org" && c.id !== "c1");
-        return [
-          { id: "c-user-org", name: currentUser.organization || "", members: 42, role: "Integrante Oficial" },
-          ...withoutOrg
-        ];
+    const list = [];
+    if (currentUser?.organization && currentUser.organization !== "Distrito Geral" && currentUser.organization.trim() !== "") {
+      const orgCount = users 
+        ? users.filter(u => u.organization && u.organization.toLowerCase().trim() === currentUser.organization?.toLowerCase().trim()).length 
+        : 0;
+      list.push({
+        id: "c-user-org",
+        name: currentUser.organization,
+        members: orgCount > 0 ? orgCount : 1,
+        role: "Integrante Oficial"
+      });
+    } else if (currentUser?.city && currentUser.city.trim() !== "") {
+      const cityCount = users 
+        ? users.filter(u => u.city && u.city.toLowerCase().trim() === currentUser.city?.toLowerCase().trim()).length 
+        : 0;
+      list.push({
+        id: "c-user-city",
+        name: `Distrito ${currentUser.city}`,
+        members: cityCount > 0 ? cityCount : 1,
+        role: "Integrante Oficial"
       });
     }
-  }, [currentUser?.organization]);
+    setMyCommunities(list);
+  }, [currentUser, users]);
 
-  const [pendingInvites, setPendingInvites] = useState([
-    { id: "p1", name: "Bloco Força Jovem - SP", inviter: "Lucas Tanaka" },
-    { id: "p2", name: "Equipe Amizade Soka", inviter: "Juliana Santos" }
-  ]);
+  const [pendingInvites, setPendingInvites] = useState<any[]>([]);
 
-  const [favoriteComms, setFavoriteComms] = useState(["Distrito Sol Nascente - CE"]);
+  const [favoriteComms, setFavoriteComms] = useState<string[]>([]);
 
   // Toast confirmation feedback
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -382,9 +420,14 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
           adaptedModality
         }
       };
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (firebaseAuth?.currentUser) {
+        const idToken = await firebaseAuth.currentUser.getIdToken();
+        headers["Authorization"] = `Bearer ${idToken}`;
+      }
       const res = await fetch("/api/users/update", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: headers,
         body: JSON.stringify(payload)
       });
       const data = await res.json();
@@ -409,40 +452,123 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
     setTimeout(() => setToastMsg(null), 4000);
   };
 
-  // Handler for changing themes
-  const handleThemeChange = (newTheme: string) => {
+  // Handler for changing themes with persistent backend save
+  const handleThemeChange = async (newTheme: string) => {
     setTheme(newTheme);
     localStorage.setItem("bodhishape_theme", newTheme);
     showToast(`Visual atualizado para o modo: ${newTheme.toUpperCase()}! ✨`);
     
-    // Apply temporary/preview CSS changes onto root elements
-    const bodyEl = document.documentElement;
-    if (newTheme === "claro") {
-      bodyEl.classList.add("theme-light-preview");
-      bodyEl.style.setProperty("--background-preview", "#f8fafc");
+    // Apply immediately to HTML element root for preview
+    const htmlEl = document.documentElement;
+    htmlEl.classList.remove("theme-claro", "theme-escuro", "theme-personalizado");
+    if (newTheme === "auto") {
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      htmlEl.classList.add(prefersDark ? "theme-escuro" : "theme-claro");
     } else {
-      bodyEl.classList.remove("theme-light-preview");
-      bodyEl.style.removeProperty("--background-preview");
+      htmlEl.classList.add(`theme-${newTheme}`);
+    }
+
+    if (currentUser && onUpdateUser) {
+      try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (firebaseAuth?.currentUser) {
+          const idToken = await firebaseAuth.currentUser.getIdToken();
+          headers["Authorization"] = `Bearer ${idToken}`;
+        }
+        const res = await fetch("/api/users/update", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            userId: currentUser.id,
+            theme: newTheme
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          onUpdateUser(data);
+        }
+      } catch (err) {
+        console.error("Failed to save theme in backend:", err);
+      }
     }
   };
 
-  // Handler for changing language
-  const handleLangChange = (newLang: string) => {
+  // Handler for changing language (authentic & functional)
+  const handleLangChange = async (newLang: string) => {
+    if (newLang !== "portuguese") {
+      showToast("Idioma em breve! Somente o Português 🇧🇷 está disponível no momento.");
+      return;
+    }
     setLang(newLang);
     localStorage.setItem("bodhishape_lang", newLang);
-    const names: Record<string, string> = {
-      portuguese: "Português 🇧🇷", 
-      english: "English 🇺🇸", 
-      spanish: "Espanhol 🇪🇸", 
-      japanese: "日本語 🇯🇵"
-    };
-    showToast(`Idioma do aplicativo alterado para ${names[newLang] || newLang}!`);
+    showToast("Idioma do aplicativo alterado para Português 🇧🇷!");
+
+    if (currentUser && onUpdateUser) {
+      try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (firebaseAuth?.currentUser) {
+          const idToken = await firebaseAuth.currentUser.getIdToken();
+          headers["Authorization"] = `Bearer ${idToken}`;
+        }
+        const res = await fetch("/api/users/update", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            userId: currentUser.id,
+            lang: newLang
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          onUpdateUser(data);
+        }
+      } catch (err) {
+        console.error("Failed to save language:", err);
+      }
+    }
   };
 
   // Disconnect device handler (smooth filter update)
   const handleDisconnectDevice = (id: string, name: string) => {
+    if (id === "current-dev") {
+      showToast("Não é possível desconectar a sessão ativa deste navegador. Para sair, utilize o botão 'Sair' abaixo.");
+      return;
+    }
     setDevices(devices.filter(d => d.id !== id));
     showToast(`O dispositivo ${name} foi desconectado e sua sessão foi encerrada com sucesso! 🛡️`);
+  };
+
+  // Submit Social Links Handler
+  const handleSaveSocials = async () => {
+    if (currentUser && onUpdateUser) {
+      try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (firebaseAuth?.currentUser) {
+          const idToken = await firebaseAuth.currentUser.getIdToken();
+          headers["Authorization"] = `Bearer ${idToken}`;
+        }
+        const res = await fetch("/api/users/update", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            userId: currentUser.id,
+            socials
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          onUpdateUser(data);
+          showToast("Links de redes sociais sincronizados com sucesso na nuvem! 🔗🌟");
+        } else {
+          showToast("Erro ao sincronizar links de redes sociais.");
+        }
+      } catch (err) {
+        console.error("Failed to save socials in profile:", err);
+        showToast("Erro ao salvar links de redes sociais.");
+      }
+    } else {
+      showToast("Links de redes sociais salvos localmente! 🔗");
+    }
   };
 
   // Submit Feedback Handler
@@ -688,6 +814,66 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
                   />
                 </div>
               </div>
+
+              {/* Seção Física & IMC Automático */}
+              <div className="border-t border-slate-850 pt-3.5 space-y-3">
+                <span className="text-[10px] font-black uppercase text-indigo-400 tracking-wider">🧬 Medidas Corporais e IMC:</span>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Altura (cm):</span>
+                    <input
+                      type="number"
+                      placeholder="Ex: 175"
+                      value={height || ""}
+                      onChange={(e) => setHeight(Number(e.target.value))}
+                      className="w-full text-xs bg-slate-950 border border-slate-850 rounded-xl p-2.5 text-slate-100 outline-none focus:border-indigo-550"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Peso Atual (kg):</span>
+                    <input
+                      type="number"
+                      placeholder="Ex: 70"
+                      value={currentWeight || ""}
+                      onChange={(e) => setCurrentWeight(Number(e.target.value))}
+                      className="w-full text-xs bg-slate-950 border border-slate-850 rounded-xl p-2.5 text-slate-100 outline-none focus:border-indigo-550"
+                    />
+                  </div>
+                </div>
+
+                {(() => {
+                  if (!currentWeight || !height) return null;
+                  const hMeters = height / 100;
+                  const value = Number((currentWeight / (hMeters * hMeters)).toFixed(1));
+                  let text = "Peso normal";
+                  let color = "text-emerald-400 border-emerald-500/20 bg-emerald-500/5";
+                  if (value < 18.5) {
+                    text = "Abaixo do peso";
+                    color = "text-sky-400 border-sky-500/20 bg-sky-500/5";
+                  } else if (value >= 18.5 && value < 25) {
+                    text = "Peso normal";
+                    color = "text-emerald-400 border-emerald-500/30 bg-emerald-500/10";
+                  } else if (value >= 25 && value < 30) {
+                    text = "Sobrepeso";
+                    color = "text-amber-400 border-amber-500/30 bg-amber-500/10";
+                  } else {
+                    text = "Obesidade";
+                    color = "text-rose-400 border-rose-500/30 bg-rose-500/10";
+                  }
+                  return (
+                    <div className={`p-4 rounded-xl border ${color} flex items-center justify-between gap-3 shadow-md`}>
+                      <div>
+                        <span className="text-[8px] uppercase font-black tracking-wider block opacity-70">Resultado do IMC Automático</span>
+                        <span className="text-sm font-black font-mono text-slate-150">{value} <span className="text-[10px]">kg/m²</span></span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[8px] uppercase font-black tracking-wider block opacity-70">Classificação</span>
+                        <span className="text-[11px] font-heading font-black">{text}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
 
             <div className="flex justify-end pt-2">
@@ -748,10 +934,10 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
 
             <div className="grid grid-cols-2 gap-2">
               {[
-                { id: "portuguese", label: "🇧🇷 Português", native: "Português (Brasil)" },
-                { id: "english", label: "🇺🇸 English", native: "American English" },
-                { id: "spanish", label: "🇪🇸 Espanhol", native: "Español de América" },
-                { id: "japanese", label: "🇯🇵 日本語", native: "Gakkai Gengo" }
+                { id: "portuguese", label: "🇧🇷 Português", native: "Português (Brasil)", active: true },
+                { id: "english", label: "🇺🇸 English", native: "American English (Em breve)", active: false },
+                { id: "spanish", label: "🇪🇸 Espanhol", native: "Español (Em breve)", active: false },
+                { id: "japanese", label: "🇯🇵 日本語", native: "日本語 (Em breve)", active: false }
               ].map((l) => {
                 const isSelected = lang === l.id;
                 return (
@@ -762,7 +948,9 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
                     className={`font-sans p-2.5 rounded-xl border text-left transition-all ${
                       isSelected
                         ? "bg-indigo-500/20 border-indigo-500/50 text-indigo-200"
-                        : "bg-slate-950/40 border-slate-850 text-slate-400 hover:bg-slate-950/70 hover:text-slate-200"
+                        : l.active
+                          ? "bg-slate-950/40 border-slate-850 text-slate-400 hover:bg-slate-950/70 hover:text-slate-200"
+                          : "bg-slate-950/20 border-slate-900/40 text-slate-600 cursor-not-allowed opacity-50"
                     }`}
                   >
                     <p className="text-[11px] font-extrabold">{l.label}</p>
@@ -805,7 +993,18 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
                 <label className="block text-[10px] font-bold text-indigo-400 uppercase tracking-wider">🔍 Escala de Textos</label>
                 <select
                   value={fontSize}
-                  onChange={(e) => setFontSize(e.target.value as any)}
+                  onChange={(e) => {
+                    const size = e.target.value as any;
+                    setFontSize(size);
+                    const htmlEl = document.documentElement;
+                    htmlEl.classList.remove(
+                      "accessibility-text-small",
+                      "accessibility-text-medium",
+                      "accessibility-text-large",
+                      "accessibility-text-extra-large"
+                    );
+                    htmlEl.classList.add(`accessibility-text-${size}`);
+                  }}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-300 focus:border-indigo-500 transition-all"
                 >
                   <option value="small">Tamanho Pequeno (13px)</option>
@@ -842,7 +1041,16 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
                   <input
                     type="checkbox"
                     checked={highContrast}
-                    onChange={(e) => setHighContrast(e.target.checked)}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setHighContrast(checked);
+                      const htmlEl = document.documentElement;
+                      if (checked) {
+                        htmlEl.classList.add("accessibility-high-contrast");
+                      } else {
+                        htmlEl.classList.remove("accessibility-high-contrast");
+                      }
+                    }}
                     className="w-4 h-4 text-indigo-600 border-slate-800 bg-slate-950 rounded focus:ring-indigo-500 cursor-pointer"
                   />
                 </div>
@@ -1075,8 +1283,8 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
             <div className="flex justify-end pt-1">
               <button
                 type="button"
-                onClick={() => showToast("Handles de redes sociais atualizados com sucesso no perfil! 🔗")}
-                className="text-[10px] bg-indigo-650 hover:bg-indigo-600 text-white font-bold p-2 px-4 rounded-xl border border-indigo-550/30 font-heading"
+                onClick={handleSaveSocials}
+                className="text-[10px] bg-indigo-650 hover:bg-indigo-600 text-white font-bold p-2 px-4 rounded-xl border border-indigo-550/30 font-heading cursor-pointer"
               >
                 Salvar Links Sociais
               </button>
@@ -1138,29 +1346,36 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
             <div className="space-y-2">
               <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider block">Grupos Soka Participados ({myCommunities.length}):</span>
               <div className="space-y-2">
-                {myCommunities.map(c => {
-                  const isFav = favoriteComms.includes(c.name);
-                  return (
-                    <div key={c.id} className="p-3 bg-slate-950/45 rounded-xl border border-slate-850 flex items-center justify-between">
-                      <div className="leading-tight">
-                        <p className="text-[11px] font-bold text-slate-205">{c.name}</p>
-                        <p className="text-[9px] text-slate-450 mt-0.5">{c.members} Membros Ativos • <span className="text-indigo-450">{c.role}</span></p>
+                {myCommunities.length > 0 ? (
+                  myCommunities.map(c => {
+                    const isFav = favoriteComms.includes(c.name);
+                    return (
+                      <div key={c.id} className="p-3 bg-slate-950/45 rounded-xl border border-slate-850 flex items-center justify-between">
+                        <div className="leading-tight">
+                          <p className="text-[11px] font-bold text-slate-205">{c.name}</p>
+                          <p className="text-[9px] text-slate-450 mt-0.5">{c.members} Membros Ativos • <span className="text-indigo-455">{c.role}</span></p>
+                        </div>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleFavoriteComm(c.name)}
+                            className={`p-1.5 rounded-lg border text-[10px] font-bold transition ${
+                              isFav ? "bg-amber-500/10 border-amber-500/35 text-amber-400" : "bg-slate-900 border-slate-800 text-slate-550 hover:text-slate-300"
+                            }`}
+                            title="Grupo favorito"
+                          >
+                            ⭐
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleToggleFavoriteComm(c.name)}
-                          className={`p-1.5 rounded-lg border text-[10px] font-bold transition ${
-                            isFav ? "bg-amber-500/10 border-amber-500/35 text-amber-400" : "bg-slate-900 border-slate-800 text-slate-550 hover:text-slate-300"
-                          }`}
-                          title="Grupo favorito"
-                        >
-                          ⭐
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                ) : (
+                  <div className="p-4 text-center rounded-xl border border-dashed border-slate-800 bg-slate-950/20 text-slate-400 text-[10px]">
+                    🪷 Nenhum grupo soka associado ainda.
+                    <p className="text-[8px] text-slate-500 mt-1">Preencha sua organização ou distrito nas configurações acima para vincular automaticamente.</p>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1208,39 +1423,40 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
             </p>
 
             <div className="grid grid-cols-2 gap-2.5">
-              
-              <div className="p-3 bg-indigo-950/10 border border-indigo-500/15 rounded-xl flex items-center gap-2.5">
-                <div className="text-xl">🏆</div>
-                <div className="leading-tight">
-                  <p className="text-[10px] font-black text-slate-100 font-heading">Desafio 30 dias</p>
-                  <p className="text-[8px] text-emerald-400 font-bold uppercase mt-0.5">Concluído ✓</p>
-                </div>
-              </div>
+              {(() => {
+                const completed = [];
+                if (currentUser && currentUser.streak >= 30) {
+                  completed.push({ id: "Streak30", icon: "🏆", title: "Desafio 30 dias", label: "Constância de Ouro" });
+                }
+                if (currentUser && currentUser.streak >= 15) {
+                  completed.push({ id: "Streak15", icon: "🔥", title: "Constância Extra", label: "Sólido Empenho" });
+                }
+                if (currentUser && currentUser.daimokuBalance && currentUser.daimokuBalance >= 1000) {
+                  completed.push({ id: "DaimokuDiamante", icon: "🪷", title: "Daimoku Diamante", label: "Devoto Proativo" });
+                }
+                if (currentUser && currentUser.streak >= 7) {
+                  completed.push({ id: "Fitness7", icon: "💪", title: "Desafio Fitness", label: "Corpo Energizado" });
+                }
 
-              <div className="p-3 bg-indigo-950/10 border border-indigo-500/15 rounded-xl flex items-center gap-2.5">
-                <div className="text-xl">🔥</div>
-                <div className="leading-tight">
-                  <p className="text-[10px] font-black text-slate-100 font-heading">Constância Extra</p>
-                  <p className="text-[8px] text-emerald-400 font-bold uppercase mt-0.5">Concluído ✓</p>
-                </div>
-              </div>
+                if (completed.length === 0) {
+                  return (
+                    <div className="col-span-2 p-4 rounded-xl border border-dashed border-slate-800 bg-slate-950/40 text-center text-slate-400 text-[11px] w-full">
+                      🪷 Nenhum desafio concluído ainda.
+                      <p className="text-[9px] text-slate-500 mt-1">Sua conta é nova! Participe das campanhas de Daimoku, registre seus treinos e eleve seu streak de dias ativos para obter seus distintivos autênticos.</p>
+                    </div>
+                  );
+                }
 
-              <div className="p-3 bg-indigo-950/10 border border-indigo-500/15 rounded-xl flex items-center gap-2.5">
-                <div className="text-xl">🪷</div>
-                <div className="leading-tight">
-                  <p className="text-[10px] font-black text-slate-100 font-heading">Daimoku Diamante</p>
-                  <p className="text-[8px] text-emerald-400 font-bold uppercase mt-0.5">Concluído ✓</p>
-                </div>
-              </div>
-
-              <div className="p-3 bg-indigo-950/10 border border-indigo-500/15 rounded-xl flex items-center gap-2.5">
-                <div className="text-xl">💪</div>
-                <div className="leading-tight">
-                  <p className="text-[10px] font-black text-slate-100 font-heading">Desafio Fitness</p>
-                  <p className="text-[8px] text-emerald-400 font-bold uppercase mt-0.5">Concluído ✓</p>
-                </div>
-              </div>
-
+                return completed.map(c => (
+                  <div key={c.id} className="p-3 bg-indigo-950/10 border border-indigo-500/15 rounded-xl flex items-center gap-2.5">
+                    <div className="text-xl">{c.icon}</div>
+                    <div className="leading-tight">
+                      <p className="text-[10px] font-black text-slate-100 font-heading">{c.title}</p>
+                      <p className="text-[8px] text-emerald-400 font-bold uppercase mt-0.5">Concluído ✓</p>
+                    </div>
+                  </div>
+                ));
+              })()}
             </div>
           </div>
 

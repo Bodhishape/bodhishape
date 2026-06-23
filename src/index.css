@@ -100,3 +100,104 @@ body {
   box-shadow: none !important;
 }
 
+/* 🎨 NEW THEMES SYSTEM STYLE DEFINITIONS */
+
+/* 1. VISUAL CLARO (theme-claro) */
+html.theme-claro body,
+html.theme-claro {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+  background-image: 
+    radial-gradient(circle at 15% 15%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+    radial-gradient(circle at 85% 85%, rgba(236, 72, 153, 0.08) 0%, transparent 50%) !important;
+}
+
+html.theme-claro .bg-slate-900,
+html.theme-claro .bg-slate-950,
+html.theme-claro .bg-slate-900\/40,
+html.theme-claro .bg-slate-950\/40,
+html.theme-claro .bg-slate-900\/30,
+html.theme-claro .bg-slate-900\/20,
+html.theme-claro .bg-slate-950\/50,
+html.theme-claro .bg-slate-900\/80,
+html.theme-claro .bg-slate-950\/80 {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+}
+
+html.theme-claro .text-slate-100,
+html.theme-claro .text-slate-200,
+html.theme-claro .text-slate-205,
+html.theme-claro .text-slate-300,
+html.theme-claro .text-white {
+  color: #0f172a !important;
+}
+
+html.theme-claro .text-slate-400,
+html.theme-claro .text-slate-450,
+html.theme-claro .text-slate-500 {
+  color: #475569 !important;
+}
+
+html.theme-claro .text-slate-200.font-heading {
+  color: #1e293b !important;
+}
+
+html.theme-claro .border-slate-800,
+html.theme-claro .border-slate-800\/80,
+html.theme-claro .border-slate-850,
+html.theme-claro .border-slate-900 {
+  border-color: #cbd5e1 !important;
+}
+
+html.theme-claro input,
+html.theme-claro select,
+html.theme-claro textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* 2. PERSONALIZADO AURA (theme-personalizado) */
+html.theme-personalizado body,
+html.theme-personalizado {
+  background-color: #0a0112 !important;
+  color: #faebff !important;
+  background-image: 
+    radial-gradient(circle at 15% 15%, rgba(139, 92, 246, 0.3) 0%, transparent 55%),
+    radial-gradient(circle at 85% 85%, rgba(244, 63, 94, 0.25) 0%, transparent 55%),
+    radial-gradient(circle at 50% 50%, rgba(20, 184, 166, 0.08) 0%, transparent 60%) !important;
+}
+
+html.theme-personalizado .bg-slate-900\/40,
+html.theme-personalizado .bg-slate-900,
+html.theme-personalizado .bg-slate-950\/40,
+html.theme-personalizado .bg-slate-950 {
+  background-color: rgba(22, 6, 38, 0.6) !important;
+  border-color: rgba(139, 92, 246, 0.45) !important;
+}
+
+html.theme-personalizado .border-slate-800,
+html.theme-personalizado .border-slate-850 {
+  border-color: rgba(139, 92, 246, 0.3) !important;
+}
+
+/* 🔍 TEXT SCALE SYSTEM FOR ACCESSIBILITY */
+html.accessibility-text-small {
+  font-size: 13px !important;
+}
+
+html.accessibility-text-medium {
+  font-size: 15px !important; /* Standard browser default */
+}
+
+html.accessibility-text-large {
+  font-size: 17.5px !important;
+}
+
+html.accessibility-text-extra-large {
+  font-size: 20px !important;
+}
+
+

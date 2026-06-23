@@ -19,11 +19,22 @@ export interface User {
   subDistrict?: string;
   streak: number;
   lastActive: string;
+  roles?: string[];
   trialEnds?: string;
   daimokuBalance?: number;
   horizontalGroup?: string;       // e.g. "Fukuchi", "Taiga"
   localGroup?: string;            // e.g. "Grupo de Dança da DF", "Taiga Recife Norte"
   horizontalGroupOfficial?: boolean; // Is it officially recognized (Sim / Não)
+  theme?: string;
+  lang?: string;
+  socials?: {
+    instagram?: string;
+    facebook?: string;
+    tiktok?: string;
+    youtube?: string;
+    x?: string;
+    threads?: string;
+  };
   
   // Production Physical Evolution Properties
   height?: number;

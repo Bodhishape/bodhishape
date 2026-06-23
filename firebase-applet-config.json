@@ -1,10 +1,10 @@
 {
-  "projectId": "local-resource-kzp7b",
-  "appId": "1:995155710849:web:4af2a849f3d9085b978e80",
-  "apiKey": "AIzaSyB1J8yNyYedgDbZ8Qtg04ZjycPCLeLpmao",
-  "authDomain": "local-resource-kzp7b.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-ba8b7ed8-a46d-4d2e-865e-941ad91cb0eb",
-  "storageBucket": "local-resource-kzp7b.firebasestorage.app",
-  "messagingSenderId": "995155710849",
+  "projectId": "bodhishape-868b3",
+  "appId": "1:1075959833367:web:62c60df0242698c54b0d52",
+  "apiKey": "AIzaSyBsOrwzWhLkQtQcHIJU4p9M_AUTTy6nVdM",
+  "authDomain": "bodhishape-868b3.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "bodhishape-868b3.firebasestorage.app",
+  "messagingSenderId": "1075959833367",
   "measurementId": ""
 }

@@ -94,7 +94,7 @@ export default function ConstancyHall({ users, activities, onSelectUser }: Const
         .filter(a => a.userId === u.id && a.type === "daimoku")
         .reduce((sum, a) => sum + (a.minutes || 0), 0);
       return { user: u, value: mins };
-    }).sort((a,b) => b.value - a.value);
+    }).filter(x => x.value > 0).sort((a,b) => b.value - a.value);
 
     // 2. Largest exercise frequency
     const exerciseLeaders = users.map(u => {
@@ -102,48 +102,70 @@ export default function ConstancyHall({ users, activities, onSelectUser }: Const
         .filter(a => a.userId === u.id && a.type === "exercise")
         .length;
       return { user: u, value: count };
-    }).sort((a,b) => b.value - a.value);
+    }).filter(x => x.value > 0).sort((a,b) => b.value - a.value);
 
     // 3. Peak streak active
-    const streakLeaders = [...extendedUsers].sort((a,b) => b.streak - a.streak);
+    const streakLeaders = [...extendedUsers].filter(u => (u.streak || 0) > 0).sort((a,b) => (b.streak || 0) - (a.streak || 0));
+
+    // Dynamic thresholds: highlights are ONLY generated if real metrics are met
+    const growthHighlight = (daimokuLeaders[0] && daimokuLeaders[0].value >= 15) ? {
+      user: daimokuLeaders[0].user,
+      title: "🏆 Campeão da Evolução Soka",
+      desc: "Liderou com persistência e auto-superação contínua nas ações diárias.",
+      metric: `${daimokuLeaders[0].value} minutos consagrados`
+    } : null;
+
+    const daimokuHighlight = (daimokuLeaders[0] && daimokuLeaders[0].value >= 15) ? {
+      user: daimokuLeaders[0].user,
+      title: "🪷 Farol da Sabedoria",
+      desc: "Maior tempo investido em oração Daimoku com foco inabalável no Kossen-rufu.",
+      metric: `${daimokuLeaders[0].value} min de Daimoku`
+    } : null;
+
+    const exercisesHighlight = (exerciseLeaders[0] && exerciseLeaders[0].value >= 2) ? {
+      user: exerciseLeaders[0].user,
+      title: "💪 Guardião do Templo Físico",
+      desc: "Maior frequência de treinos físicos para manter a saúde e a energia.",
+      metric: `${exerciseLeaders[0].value} exercícios registrados`
+    } : null;
+
+    const streakHighlight = (streakLeaders[0] && streakLeaders[0].streak >= 7) ? {
+      user: streakLeaders[0],
+      title: "🔥 Pilar da Constância",
+      desc: "Demonstrou dedicação ininterrupta, registrando hábitos sem quebrar a corrente.",
+      metric: `Série de ${streakLeaders[0].streak} dias consecutivos`
+    } : null;
+
+    // Union activities
+    const userTotalActivities = (user: User) => activities.filter(a => a.userId === user.id).length;
+    const unionLeaders = users.map(u => ({ user: u, value: userTotalActivities(u) })).filter(x => x.value >= 10).sort((a,b) => b.value - a.value);
+
+    const activitiesHighlight = unionLeaders[0] ? {
+      user: unionLeaders[0].user,
+      title: "🤝 Espírito de União",
+      desc: "Demonstrou alto empenho de união e constância nas frentes conjuntas esta semana.",
+      metric: `${unionLeaders[0].value} ações registradas`
+    } : null;
+
+    // Goals completed
+    const goalsLeaders = users.map(u => {
+      return { user: u, value: u.daimokuBalance || 0 };
+    }).filter(x => x.value >= 500).sort((a,b) => b.value - a.value);
+
+    const goalsHighlight = goalsLeaders[0] ? {
+      user: goalsLeaders[0].user,
+      title: "🌟 Realizador de Metas",
+      desc: "Alcançou um patamar primoroso em suas metas e orações acumuladas esta semana.",
+      metric: `${goalsLeaders[0].value} de Daimoku Acumulado`
+    } : null;
 
     return {
-      growth: {
-        user: daimokuLeaders[0]?.user || users[0],
-        title: "🏆 Campeão da Evolução Soka",
-        desc: "Liderou com persistência e auto-superação contínua nas ações diárias.",
-        metric: `${daimokuLeaders[0]?.value || 120} minutos consagrados`
-      },
-      daimoku: {
-        user: daimokuLeaders[0]?.user || users[0],
-        title: "🪷 Farol da Sabedoria",
-        desc: "Maior tempo investido em oração Daimoku com foco inabalável no Kossen-rufu.",
-        metric: `${daimokuLeaders[0]?.value || 120} min de Daimoku`
-      },
-      exercises: {
-        user: exerciseLeaders[0]?.user || users[1] || users[0],
-        title: "💪 Guardião do Templo Físico",
-        desc: "Maior frequência de treinos físicos para manter a saúde e a energia.",
-        metric: `${exerciseLeaders[0]?.value || 4} exercícios registrados`
-      },
-      streak: {
-        user: streakLeaders[0] || users[0],
-        title: "🔥 Pilar da Constância",
-        desc: "Demonstrou dedicação ininterrupta, registrando hábitos sem quebrar a corrente.",
-        metric: `Série de ${streakLeaders[0]?.streak || 12} dias consecutivos`
-      },
-      activities: {
-        user: users[1] || users[0],
-        title: "🤝 Abraço da Comunidade",
-        desc: "Maior envolvimento em frentes conjuntas, incentivos e diálogos públicos.",
-        metric: "Participação máxima"
-      },
-      goals: {
-        user: users[0],
-        title: "🌟 Realizador de Metas",
-        desc: "Concluiu de forma primorosa seus compromissos particulares cultivados nesta semana.",
-        metric: "Objetivos Concluídos ✅"
-      }
+      growth: growthHighlight,
+      daimoku: daimokuHighlight,
+      exercises: exercisesHighlight,
+      streak: streakHighlight,
+      activities: activitiesHighlight,
+      goals: goalsHighlight
     };
   };
 
@@ -209,7 +231,30 @@ export default function ConstancyHall({ users, activities, onSelectUser }: Const
             { info: highlights.activities, color: "border-sky-900/40 bg-sky-955/5 hover:bg-sky-955/15", icon: "🤝", badge: "Espírito de União" },
             { info: highlights.goals, color: "border-amber-900/40 bg-amber-955/5 hover:bg-amber-955/15", icon: "🌟", badge: "Metas Concluídas" }
           ].map((item, idx) => {
-            if (!item.info || !item.info.user) return null;
+            if (!item.info) {
+              return (
+                <div
+                  key={idx}
+                  className="p-4 rounded-2xl border text-left flex flex-col justify-between gap-3 shadow opacity-70 bg-slate-900/20 border-slate-850"
+                >
+                  <div className="flex items-start justify-between">
+                    <span className="text-[9px] font-bold font-mono text-slate-500 bg-slate-950/45 px-2 py-0.5 rounded border border-slate-900">
+                      {item.badge}
+                    </span>
+                    <span className="text-xl leading-none opacity-55">{item.icon}</span>
+                  </div>
+
+                  <div className="py-2 text-center text-slate-500 text-[10px] leading-relaxed">
+                    🪷 Nenhum destaque nesta categoria ainda esta semana.
+                    <p className="text-[9px] text-slate-600 mt-1">Gere dados reais no aplicativo para habilitar esse destaque.</p>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-800/35 text-center">
+                    <p className="text-[9px] text-slate-600 font-mono">Status: Em aberto</p>
+                  </div>
+                </div>
+              );
+            }
             return (
               <div
                 key={idx}

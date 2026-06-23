@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Community, User, Activity } from "../types";
+import { hasRole } from "../lib/roles";
 import MissaoNordesteMap from "./MissaoNordesteMap";
 
 interface CommunitiesPanelProps {
@@ -26,6 +27,7 @@ interface CommunitiesPanelProps {
   }) => void;
   users: User[];
   activities: Activity[];
+  firebaseAuth?: any;
 }
 
 interface ChatMessage {
@@ -40,7 +42,7 @@ interface ChatMessage {
   isPinned?: boolean;
 }
 
-export default function CommunitiesPanel({ currentUser, communities, onAddCommunity, users, activities }: CommunitiesPanelProps) {
+export default function CommunitiesPanel({ currentUser, communities, onAddCommunity, users, activities, firebaseAuth }: CommunitiesPanelProps) {
   // Rich fallback seed list in case DB has old structure
   const [localCommunities, setLocalCommunities] = useState<any[]>([]);
 
@@ -122,7 +124,7 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
           endDate: comm.endDate || "2026-12-31",
           prize: comm.prize || "Troféu de Destaque + Reconhecimento Coletivo",
           privacy: comm.privacy || (comm.id?.includes("private") ? "private" : "public"),
-          participants: comm.participants || (comm.creatorId === "system" ? ["user-1", "user-2", "user-3"] : [comm.creatorId || "user-1"])
+          participants: comm.participants || (comm.creatorId && comm.creatorId !== "system" ? [comm.creatorId] : [])
         };
       });
       setLocalCommunities(enriched);
@@ -204,39 +206,60 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
     }
   }, [currentUser, localCommunities]);
 
-  const handleJoinLeaveToggle = (commId: string) => {
-    setJoinedChallenges(prev => {
-      const isCurrentlyJoined = prev[commId];
-      if (!isCurrentlyJoined && (commId === "comm-nordeste1" || commId?.toLowerCase().includes("nordeste 1"))) {
-        if (currentUser && !isAllowedRegion(currentUser.region)) {
-          setUnlockErrorMsg("❌ Entrada Negada: Este desafio é de acesso exclusivo para membros da RM Pernambuco Norte, PE Sul, PE Oeste, RE Paraíba, RE Alagoas e RE Sergipe.");
-          setUnlockSuccessMsg("");
-          setShowInviteUnlockModal(true);
-          setTimeout(() => {
-            setShowInviteUnlockModal(false);
-            setUnlockErrorMsg("");
-          }, 6000);
-          return prev;
-        }
+  const handleJoinLeaveToggle = async (commId: string) => {
+    if (!currentUser) return;
+
+    const challenge = localCommunities.find(c => c.id === commId);
+    const isCurrentlyJoined = challenge?.participants?.includes(currentUser.id) || joinedChallenges[commId] === true;
+
+    if (!isCurrentlyJoined && (commId === "comm-nordeste1" || commId?.toLowerCase().includes("nordeste 1"))) {
+      if (!isAllowedRegion(currentUser.region)) {
+        setUnlockErrorMsg("❌ Entrada Negada: Este desafio é de acesso exclusivo para membros da RM Pernambuco Norte, PE Sul, PE Oeste, RE Paraíba, RE Alagoas e RE Sergipe.");
+        setUnlockSuccessMsg("");
+        setShowInviteUnlockModal(true);
+        setTimeout(() => {
+          setShowInviteUnlockModal(false);
+          setUnlockErrorMsg("");
+        }, 6000);
+        return;
       }
-      // Update community state parameters
-      setLocalCommunities(comms => comms.map(c => {
-        if (c.id === commId) {
-          const currentParts = c.participants || [];
-          let nextParts = [...currentParts];
-          if (isCurrentlyJoined) {
-            nextParts = nextParts.filter(p => p !== currentUser?.id);
-          } else {
-            if (currentUser && !nextParts.includes(currentUser.id)) {
-              nextParts.push(currentUser.id);
-            }
+    }
+
+    try {
+      const endpoint = isCurrentlyJoined ? `/api/communities/${commId}/leave` : `/api/communities/${commId}/join`;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (firebaseAuth?.currentUser) {
+        const token = await firebaseAuth.currentUser.getIdToken();
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ userId: currentUser.id })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        // Update local state with the returned community in localCommunities
+        setLocalCommunities(comms => comms.map(c => {
+          if (c.id === commId) {
+            return {
+              ...c,
+              participants: data.community.participants,
+              membersCount: data.community.membersCount
+            };
           }
-          return { ...c, participants: nextParts, membersCount: nextParts.length };
-        }
-        return c;
-      }));
-      return { ...prev, [commId]: !isCurrentlyJoined };
-    });
+          return c;
+        }));
+
+        setJoinedChallenges(prev => ({
+          ...prev,
+          [commId]: !isCurrentlyJoined
+        }));
+      }
+    } catch (err) {
+      console.error("Erro ao alternar participação no desafio:", err);
+    }
   };
 
   const handleAcceptInvite = (invite: any) => {
@@ -406,9 +429,14 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
     setShowAttachmentPicker(false);
 
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (firebaseAuth?.currentUser) {
+        const token = await firebaseAuth.currentUser.getIdToken();
+        headers["Authorization"] = `Bearer ${token}`;
+      }
       const res = await fetch("/api/chats", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           communityId: selectedChallenge.id,
           message: newMsg
@@ -431,8 +459,14 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
     if (!selectedChallenge) return;
     const targetId = selectedChallenge.id;
     try {
+      const headers: Record<string, string> = {};
+      if (firebaseAuth?.currentUser) {
+        const token = await firebaseAuth.currentUser.getIdToken();
+        headers["Authorization"] = `Bearer ${token}`;
+      }
       const res = await fetch(`/api/chats/${msgId}/toggle-pin`, {
-        method: "POST"
+        method: "POST",
+        headers
       });
       if (res.ok) {
         const updatedMsg = await res.json();
@@ -601,15 +635,17 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
                 Desbloquear por Código
               </button>
 
-              <button
-                onClick={() => {
-                  setShowForm(!showForm);
-                }}
-                className="px-4 py-2.5 bg-indigo-650 hover:bg-indigo-600 border border-indigo-550/20 text-white text-xs font-extrabold rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer select-none"
-              >
-                <Plus className="w-4 h-4" />
-                Criar Desafio
-              </button>
+              {currentUser && hasRole(currentUser, ["admin", "leader", "district_leader", "regional_leader", "community_admin"]) && (
+                <button
+                  onClick={() => {
+                    setShowForm(!showForm);
+                  }}
+                  className="px-4 py-2.5 bg-indigo-650 hover:bg-indigo-600 border border-indigo-550/20 text-white text-xs font-extrabold rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer select-none"
+                >
+                  <Plus className="w-4 h-4" />
+                  Criar Desafio
+                </button>
+              )}
             </div>
           </div>
         </div>

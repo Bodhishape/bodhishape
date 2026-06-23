@@ -14,6 +14,8 @@ interface PrivateEvolutionProps {
   initialTab?: "insights" | "calendar" | "history" | "photos" | "body";
   focusOnDaimoku?: boolean;
   onUpdateUser?: (updated: User) => void;
+  firebaseAuth?: any;
+  daimokuTimerProps?: any;
 }
 
 interface ProgressPhoto {
@@ -30,10 +32,42 @@ export default function PrivateEvolution({
   goals,
   initialTab,
   focusOnDaimoku,
-  onUpdateUser
+  onUpdateUser,
+  firebaseAuth,
+  daimokuTimerProps
 }: PrivateEvolutionProps) {
   const [filterType, setFilterType] = useState<"all" | "gongyo" | "daimoku" | "exercise" | "weight">("all");
   const [activeSubTab, setActiveSubTab] = useState<"insights" | "photos" | "calendar" | "history" | "body">("insights");
+
+  // Timer custom adjustments states
+  const [isCustomDaimokuTime, setIsCustomDaimokuTime] = useState<boolean>(false);
+  const [daimokuMins, setDaimokuMins] = useState<number>(() => daimokuTimerProps?.duration || 15);
+
+  useEffect(() => {
+    if (focusOnDaimoku) {
+      setFilterType("daimoku");
+    }
+  }, [focusOnDaimoku]);
+
+  // Real-time active practitioners list
+  const [activePractitioners, setActivePractitioners] = useState<{ userId: string; name: string }[]>([]);
+  useEffect(() => {
+    if (!focusOnDaimoku) return;
+    const fetchActive = async () => {
+      try {
+        const res = await fetch("/api/daimoku/active");
+        if (res.ok) {
+          const data = await res.json();
+          setActivePractitioners(data);
+        }
+      } catch (err) {
+        console.error("Error fetching active practitioners:", err);
+      }
+    };
+    fetchActive();
+    const interval = setInterval(fetchActive, 10000);
+    return () => clearInterval(interval);
+  }, [focusOnDaimoku]);
 
   useEffect(() => {
     if (initialTab) {
@@ -69,6 +103,12 @@ export default function PrivateEvolution({
     if (currentUser) {
       localStorage.setItem(`personal_daimoku_goal_${currentUser.id}`, String(validMins));
     }
+  };
+
+  const formatTimerString = (totalSecs: number) => {
+    const m = Math.floor(totalSecs / 60);
+    const s = totalSecs % 60;
+    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   };
 
   // State files indicators
@@ -160,9 +200,14 @@ export default function PrivateEvolution({
     if (!currentUser || !onUpdateUser) return false;
     try {
       setIsSavingBodyData(true);
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (firebaseAuth?.currentUser) {
+        const idToken = await firebaseAuth.currentUser.getIdToken();
+        headers["Authorization"] = `Bearer ${idToken}`;
+      }
       const res = await fetch("/api/users/update", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: headers,
         body: JSON.stringify({
           userId: currentUser.id,
           ...fields
@@ -856,6 +901,225 @@ export default function PrivateEvolution({
               {/* Right Columns: AI Interactive feedback scrolling chat bubbles */}
               <div className={`${focusOnDaimoku ? "md:col-span-3" : "md:col-span-2"} space-y-4`}>
                 
+                {/* CORE DAIMOKU STOPWATCH INTUITIVE WIDGET */}
+                {focusOnDaimoku && daimokuTimerProps && (
+                  <div className="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800/80 p-6 flex flex-col shadow-xl space-y-5" id="daimoku-stopwatch-control-card">
+                    <div>
+                      <span className="bg-[#1F1625] text-rose-400 border border-rose-900/30 text-[10px] font-bold font-mono py-1 px-3 rounded-full uppercase tracking-wider">
+                        ⏱️ Cronômetro de Daimoku Ativo (Fonte Única)
+                      </span>
+                      <h3 className="text-base font-bold font-heading text-slate-100 mt-2">
+                        Pratique seu Daimoku Virtual
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-0.5 leading-relaxed font-sans">
+                        Selecione o tempo da sua sessão e use o áudio de fomento síncrono para orar Nam-myoho-renge-kyo. Seus registros alimentam automaticamente todo o ecossistema.
+                      </p>
+                    </div>
+
+                    {/* Community synchrony indicator */}
+                    <div className="bg-indigo-950/20 text-indigo-300 py-2.5 px-3 rounded-xl text-[11px] flex flex-col gap-1 border border-indigo-900/30 font-sans">
+                      <div className="flex items-center justify-center gap-2">
+                        <span className="w-2 rounded-full h-2 bg-emerald-500 animate-pulse shrink-0" />
+                        <span>
+                          {activePractitioners.length > 0 ? (
+                            <span>Há <strong className="text-emerald-400">{activePractitioners.length}</strong> praticante(s) em sincronia espiritual agora! 🪷</span>
+                          ) : (
+                            <span>Companheiros soka estão orando em sincronia coletiva agora. 🪷</span>
+                          )}
+                        </span>
+                      </div>
+                      {activePractitioners.length > 0 && (
+                        <p className="text-[10px] text-slate-500 text-center font-medium truncate max-w-sm mx-auto mt-0.5">
+                          👤 Ativos: {activePractitioners.map((p) => p.name.split(" ")[0]).join(", ")}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Preset Duration Buttons */}
+                    <div className="space-y-2 text-left">
+                      <span className="text-[10px] uppercase font-mono tracking-wider font-bold text-slate-500 block">
+                        ⏱️ Defina a Duração Desejada:
+                      </span>
+                      <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.55">
+                        {[5, 10, 15, 20, 30, 45, 60, 90].map((mins) => {
+                          const isSelected = !isCustomDaimokuTime && daimokuTimerProps.duration === mins;
+                          return (
+                            <button
+                              key={mins}
+                              type="button"
+                              disabled={daimokuTimerProps.isRunning}
+                              onClick={() => {
+                                setIsCustomDaimokuTime(false);
+                                daimokuTimerProps.setDuration(mins);
+                              }}
+                              className={`py-1.5 text-xs font-bold rounded-lg border transition-all cursor-pointer ${
+                                isSelected
+                                  ? "bg-pink-600 font-black text-white border-pink-500/50 shadow-md shadow-pink-950/20"
+                                  : "bg-slate-950/50 border-slate-850 text-slate-400 hover:text-slate-200"
+                              }`}
+                            >
+                              {mins}m
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Adjust custom slider button */}
+                      <button
+                        type="button"
+                        disabled={daimokuTimerProps.isRunning}
+                        onClick={() => {
+                          setIsCustomDaimokuTime(!isCustomDaimokuTime);
+                        }}
+                        className={`w-full py-1.5 text-[11px] font-bold rounded-lg border transition-all cursor-pointer ${
+                          isCustomDaimokuTime
+                            ? "bg-pink-950/40 border-pink-500/50 text-pink-450 font-extrabold"
+                            : "bg-slate-950/50 border-slate-850 text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        {isCustomDaimokuTime ? "✕ Fechar Ajuste Manual" : "✍️ Ajustar Tempo com Precisão Manual"}
+                      </button>
+
+                      {isCustomDaimokuTime && (
+                        <div className="bg-slate-950/45 p-3 rounded-xl border border-slate-850 space-y-1.5 animate-fade-in">
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="font-bold text-slate-400">Tempo de Oração Definido:</span>
+                            <span className="text-soka-pink font-mono font-bold">{daimokuTimerProps.duration} minutos</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="1"
+                            max="240"
+                            step="1"
+                            disabled={daimokuTimerProps.isRunning}
+                            value={daimokuTimerProps.duration}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              setDaimokuMins(val);
+                              daimokuTimerProps.setDuration(val);
+                            }}
+                            className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-soka-pink"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Audio Guia selection */}
+                    <div className="space-y-2 text-left">
+                      <span className="text-[10px] uppercase font-mono tracking-wider font-bold text-slate-500 block">
+                        🎵 Áudio de Acompanhamento (Opcional):
+                      </span>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          { id: "none", label: "🔘 Sem Áudio", desc: "Silencioso" },
+                          { id: "lento", label: "🪷 Daimoku Lento", desc: "Compassado Altar" },
+                          { id: "vibrante", label: "🔥 Daimoku Vibrante", desc: "Ritmado e dinâmico" },
+                          { id: "sensei", label: "👑 Com Sensei SGI", desc: "Sopro coral de fomento" }
+                        ].map((item) => {
+                          const isSelected = daimokuTimerProps.audioType === item.id;
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => {
+                                daimokuTimerProps.setAudioType(item.id as any);
+                              }}
+                              className={`p-2 rounded-xl text-left border transition-all cursor-pointer ${
+                                isSelected
+                                  ? "bg-slate-950 border-pink-500 text-white shadow"
+                                  : "bg-slate-950/20 border-slate-850 text-slate-400 hover:border-slate-800 hover:text-slate-300"
+                              }`}
+                            >
+                              <span className="text-xs font-bold block">{item.label}</span>
+                              <span className="text-[9px] text-slate-500 block mt-0.5 leading-tight">{item.desc}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Volume slider for Voice Guide */}
+                    {daimokuTimerProps.audioType !== "none" && daimokuTimerProps.volume !== undefined && (
+                      <div className="bg-slate-950/30 p-3 rounded-xl border border-slate-850 text-left space-y-1.5 animate-fade-in font-sans">
+                        <div className="flex justify-between items-center text-[10px]">
+                          <span className="font-bold text-slate-400 uppercase tracking-wide font-mono flex items-center gap-1.5 justify-start">
+                            {daimokuTimerProps.volume === 0 ? "🔇" : "🔊"} Volume do Guia de Voz:
+                          </span>
+                          <span className="font-bold text-soka-pink font-mono">{daimokuTimerProps.volume}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          step="5"
+                          value={daimokuTimerProps.volume}
+                          onChange={(e) => {
+                            daimokuTimerProps.setVolume(Number(e.target.value));
+                          }}
+                          className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-soka-pink"
+                        />
+                      </div>
+                    )}
+
+                    {/* Countdown Display */}
+                    <div className="space-y-1 py-4 bg-[#12091A] rounded-2xl border border-pink-500/10 shadow-inner relative overflow-hidden text-center">
+                      {daimokuTimerProps.isRunning && (
+                        <div className="absolute inset-0 bg-pink-500/5 blur-[25px] rounded-full animate-pulse pointer-events-none" />
+                      )}
+                      <span className="text-[9px] uppercase font-mono tracking-widest font-extrabold text-slate-500 block">
+                        {daimokuTimerProps.isRunning ? "🧘 SUANDO O KARMA EM ANDAMENTO" : "ESTABELEÇA SEU TEMPO DIÁRIO"}
+                      </span>
+                      <p className="text-4xl sm:text-5xl font-black text-[#FF85A1] font-mono tracking-tight leading-none my-1">
+                        {formatTimerString(daimokuTimerProps.secondsRemaining)}
+                      </p>
+                      <p className="text-[10px] text-slate-500 font-mono">
+                        Meta Definida: {daimokuTimerProps.duration} minutos (Capacidade de até 2 pontos)
+                      </p>
+                    </div>
+
+                    {/* Action controls buttons row */}
+                    <div className="flex justify-center items-center gap-3 font-sans">
+                      {!daimokuTimerProps.isRunning ? (
+                        <button
+                          type="button"
+                          onClick={daimokuTimerProps.startTimer}
+                          className="flex-1 py-3 bg-pink-600 hover:bg-pink-750 text-white font-extrabold rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-pink-950/20 cursor-pointer"
+                        >
+                          ⚡ Iniciar Prática (🔔 Sino)
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={daimokuTimerProps.pauseTimer}
+                          className="flex-1 py-3 bg-slate-800 hover:bg-slate-750 text-amber-300 font-extrabold rounded-xl text-xs transition flex items-center justify-center gap-1.5 cursor-pointer border border-slate-700/50"
+                        >
+                          ⏸️ Pausar Daimoku
+                        </button>
+                      )}
+
+                      {daimokuTimerProps.secondsRemaining !== daimokuTimerProps.duration * 60 && (
+                        <button
+                          type="button"
+                          onClick={daimokuTimerProps.resetTimer}
+                          className="px-4 py-3 bg-[#13192B] border border-slate-850 hover:bg-slate-900 text-slate-400 text-xs font-bold rounded-xl transition cursor-pointer"
+                        >
+                          Zerar
+                        </button>
+                      )}
+                    </div>
+
+                    {daimokuTimerProps.isRunning && (
+                      <button
+                        type="button"
+                        onClick={daimokuTimerProps.finishTimerEarly}
+                        className="w-full py-2.5 bg-[#1C000B] hover:bg-[#2C0011] text-pink-400 hover:text-pink-300 border border-pink-900/20 hover:border-pink-500/45 rounded-xl text-xs font-bold transition cursor-pointer font-sans"
+                      >
+                        🔔 Encerrar e Gravar Tempo Parcial
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 {/* PERSONAL DAIMOKU BUBBLE CHART CARD WITH CUSTOMIZABLE OBJECTIVE */}
                 <div className="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800/80 p-6 flex flex-col shadow-xl space-y-5" id="personal-daimoku-bubble-goal-card">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

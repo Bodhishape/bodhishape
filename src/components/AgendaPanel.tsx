@@ -39,6 +39,7 @@ interface AgendaPanelProps {
   setLoggerSuccessMsg: (msg: string | null) => void;
   setLoggerErrorMsg: (msg: string | null) => void;
   sendLocalNotification?: (title: string, body: string) => void;
+  firebaseAuth?: any;
 }
 
 export default function AgendaPanel({
@@ -49,7 +50,8 @@ export default function AgendaPanel({
   onAddLogActivity,
   setLoggerSuccessMsg,
   setLoggerErrorMsg,
-  sendLocalNotification
+  sendLocalNotification,
+  firebaseAuth
 }: AgendaPanelProps) {
   const [reminders, setReminders] = useState<AgendaEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -220,9 +222,14 @@ export default function AgendaPanel({
 
     try {
       setIsSubmitting(true);
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (firebaseAuth?.currentUser) {
+        const token = await firebaseAuth.currentUser.getIdToken();
+        headers["Authorization"] = `Bearer ${token}`;
+      }
       const res = await fetch("/api/reminders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           userId: currentUser.id,
           title: newTitle,
@@ -260,8 +267,14 @@ export default function AgendaPanel({
 
   const handleDeleteEvent = async (id: string) => {
     try {
+      const headers: Record<string, string> = {};
+      if (firebaseAuth?.currentUser) {
+        const token = await firebaseAuth.currentUser.getIdToken();
+        headers["Authorization"] = `Bearer ${token}`;
+      }
       const res = await fetch(`/api/reminders/${id}`, {
-        method: "DELETE"
+        method: "DELETE",
+        headers
       });
       if (res.ok) {
         setReminders(prev => prev.filter(r => r.id !== id));

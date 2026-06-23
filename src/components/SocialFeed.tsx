@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Post, User, ExerciseCategory } from "../types";
+import { hasRole } from "../lib/roles";
 
 interface SocialFeedProps {
   posts: Post[];
@@ -18,6 +19,7 @@ interface SocialFeedProps {
   onSubmitCombined: (payload: any) => Promise<any>; // New Unified creation callback
   onSelectUser?: (user: User) => void;
   onPostCreated?: () => void;
+  firebaseAuth?: any;
 }
 
 const predefinedImages = [
@@ -85,7 +87,8 @@ export default function SocialFeed({
   onNewPost, 
   onSubmitCombined,
   onSelectUser,
-  onPostCreated
+  onPostCreated,
+  firebaseAuth
 }: SocialFeedProps) {
   
   // Custom states
@@ -105,9 +108,14 @@ export default function SocialFeed({
     const reader = new FileReader();
     reader.onloadend = async () => {
       try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (firebaseAuth?.currentUser) {
+          const token = await firebaseAuth.currentUser.getIdToken();
+          headers["Authorization"] = `Bearer ${token}`;
+        }
         const res = await fetch("/api/upload", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({
             image: reader.result,
             name: file.name
@@ -137,9 +145,14 @@ export default function SocialFeed({
     const reader = new FileReader();
     reader.onloadend = async () => {
       try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (firebaseAuth?.currentUser) {
+          const token = await firebaseAuth.currentUser.getIdToken();
+          headers["Authorization"] = `Bearer ${token}`;
+        }
         const res = await fetch("/api/upload", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({
             image: reader.result,
             name: file.name
@@ -1118,7 +1131,7 @@ export default function SocialFeed({
                           <p className="text-slate-250 text-sm font-semibold font-sans mt-0.5 flex items-center gap-1.5">
                             {post.content}
                           </p>
-                          {currentUser && (post.userId === currentUser.id || post.userName === currentUser.name || post.userName === currentUser.displayName || currentUser.email === "nara.gabriela@gmail.com") && (
+                          {currentUser && (post.userId === currentUser.id || post.userName === currentUser.name || post.userName === currentUser.displayName || hasRole(currentUser, "admin")) && (
                             <button
                               type="button"
                               onClick={() => handleDeletePost(post.id)}
@@ -1267,7 +1280,7 @@ export default function SocialFeed({
                           <p className="text-slate-300 text-sm whitespace-pre-line leading-relaxed font-sans">
                             {post.content}
                           </p>
-                          {currentUser && (post.userId === currentUser.id || post.userName === currentUser.name || post.userName === currentUser.displayName || currentUser.email === "nara.gabriela@gmail.com") && (
+                          {currentUser && (post.userId === currentUser.id || post.userName === currentUser.name || post.userName === currentUser.displayName || hasRole(currentUser, "admin")) && (
                             <div className="flex gap-2.5 justify-end text-[9px] text-slate-500 mt-2">
                               <button
                                 type="button"
@@ -1450,7 +1463,7 @@ export default function SocialFeed({
                           ) : (
                             <>
                               <p className="mt-0.5 text-slate-250">{comm.content}</p>
-                              {currentUser && (comm.userId === currentUser.id || comm.userName === currentUser.name || comm.userName === currentUser.displayName || currentUser.email === "nara.gabriela@gmail.com") && (
+                              {currentUser && (comm.userId === currentUser.id || comm.userName === currentUser.name || comm.userName === currentUser.displayName || hasRole(currentUser, "admin")) && (
                                 <div className="flex gap-2 mt-1 justify-end text-[9px] text-slate-500">
                                   <button
                                     type="button"

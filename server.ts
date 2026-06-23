@@ -7,14 +7,15 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
 import { initializeApp } from "firebase/app";
+import { AsyncLocalStorage } from "async_hooks";
 import { 
   getFirestore, doc, getDoc, setDoc, getDocs, collection, 
   deleteDoc, query, where, orderBy, limit, initializeFirestore,
   setLogLevel
 } from "firebase/firestore";
-import {
-  getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword
-} from "firebase/auth";
+import { getAuth } from "firebase/auth";
+import { hasRole } from "./src/lib/roles";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 dotenv.config();
 setLogLevel("silent");
@@ -41,6 +42,8 @@ const initialData = {
   chats: [],
   stories: [],
   reminders: [],
+  notices: [],
+  memories: [],
   system_config: {
     trialStartDate: new Date().toISOString()
   }
@@ -48,44 +51,53 @@ const initialData = {
 
 // 2. Initialize Firebase Client matching config properties
 let db: any = null;
+let firebaseConfig: any = null;
+const requestContext = new AsyncLocalStorage<any>();
 
-// Authenticate the Server Proxy account asynchronously to satisfy security rules
-async function authenticateServerProxy(firebaseApp: any): Promise<boolean> {
-  const auth = getAuth(firebaseApp);
-  const serverEmail = "system.server.proxy@bodhishape.local";
-  const serverPass = "BodhiShapeServerSecurePassword123!!";
+// Remote JWKS Setup for manual Firebase Token validation using jose
+const JWKS = createRemoteJWKSet(
+  new URL("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com")
+);
 
-  console.log("[FIREBASE] Authenticating Server Proxy account in rules space...");
+async function verifyFirebaseToken(idToken: string, projectId: string) {
   try {
-    const userCred = await signInWithEmailAndPassword(auth, serverEmail, serverPass);
-    console.log("[FIREBASE] Server Proxy authenticated correctly:", userCred.user.uid);
-    return true;
+    const { payload } = await jwtVerify(idToken, JWKS, {
+      issuer: `https://securetoken.google.com/${projectId}`,
+      audience: projectId,
+    });
+    return payload; // { sub: uid, email: email, ... }
   } catch (err: any) {
-    if (
-      err.code === "auth/user-not-found" || 
-      err.message?.includes("not-found") || 
-      err.code === "auth/invalid-credential" || 
-      err.code === "auth/user-disabled"
-    ) {
-      try {
-        const userCred = await createUserWithEmailAndPassword(auth, serverEmail, serverPass);
-        console.log("[FIREBASE] Server Proxy auto-registered and signed in:", userCred.user.uid);
-        return true;
-      } catch (regErr: any) {
-        console.warn("[FIREBASE] Auto-registering system proxy failed (Ensure Email/Password auth is enabled in console):", regErr.message);
-        return false;
-      }
-    } else if (err.code === "auth/operation-not-allowed" || err.message?.includes("operation-not-allowed")) {
-      console.log("[FIREBASE] Email/Password provider is disabled in Firebase Auth Console. Server Proxy will operate in direct unauthenticated mode. This is safe and fully operational because firestore.rules allow server access.");
-      return false;
-    } else {
-      console.warn("[FIREBASE] Server Proxy login failure:", err.message);
-      return false;
-    }
+    console.error("[AUTH] JWKS JWT Token verification failed:", err.message);
+    return null;
   }
 }
 
+function toFirestoreValue(val: any): any {
+  if (typeof val === "string") return { stringValue: val };
+  if (typeof val === "number") {
+    if (Number.isInteger(val)) return { integerValue: val.toString() };
+    return { doubleValue: val };
+  }
+  if (typeof val === "boolean") return { booleanValue: val };
+  if (Array.isArray(val)) {
+    return { arrayValue: { values: val.map(toFirestoreValue).filter((v: any) => v !== null) } };
+  }
+  if (val && typeof val === "object") {
+    const fields: any = {};
+    for (const k of Object.keys(val)) {
+      const fVal = toFirestoreValue(val[k]);
+      if (fVal !== null) {
+        fields[k] = fVal;
+      }
+    }
+    return { mapValue: { fields } };
+  }
+  return null;
+}
+
 // 2.2 SMTP Welcome Email System
+const interceptedEmails: any[] = [];
+
 async function sendConfirmationEmail(user: any) {
   const smtpHost = process.env.SMTP_HOST;
   const smtpPort = process.env.SMTP_PORT;
@@ -166,6 +178,19 @@ async function sendConfirmationEmail(user: any) {
     }
   }
 
+  // Log to in-memory intercepted list for the frontend debug sandbox
+  interceptedEmails.push({
+    id: "mail-" + Date.now() + "-" + Math.random().toString(36).substr(2, 5),
+    to: user.email,
+    subject: emailSubject,
+    text: emailText,
+    html: emailHtml,
+    timestamp: new Date().toISOString()
+  });
+  if (interceptedEmails.length > 50) {
+    interceptedEmails.shift();
+  }
+
   // Graceful fallback logger
   console.log("\n==================================================================================");
   console.log(`[EMAIL PREVIEW LOGGER] WELCOME EMAIL SENT TO ${user.email}`);
@@ -203,152 +228,84 @@ async function seedAndLoadFromFirestore() {
     }
   }
 
-  if (!db) {
-    console.warn("[FIREBASE] Database is offline, booting local JSON.");
-    dbData = localDbSeed;
-    return;
-  }
-
-  try {
-    // 1. Relentless cloud purge - Delete mock files from Firestore if present
-    const mockUserIds = ["user-1", "user-2", "user-3", "user-4"];
-    for (const uid of mockUserIds) {
-      try {
-        await deleteDoc(doc(db, "users", uid));
-        await deleteDoc(doc(db, "bs_subscription", uid));
-      } catch (e) {}
-    }
-    const mockCommIds = ["comm-90dias", "comm-dfrecife", "comm-kotekitai", "comm-paraiba", "model-community"];
-    for (const cid of mockCommIds) {
-      try {
-        await deleteDoc(doc(db, "communities", cid));
-      } catch (e) {}
-    }
-    const mockPostIds = ["post-1", "post-2"];
-    for (const pid of mockPostIds) {
-      try {
-        await deleteDoc(doc(db, "posts", pid));
-      } catch (e) {}
-    }
-
-    const usersCol = collection(db, "users");
-    const usersSnapshot = await getDocs(usersCol);
-
-    // If Firestore users collection is empty (e.g. fresh database setup), upload our clean local seed
-    if (usersSnapshot.empty || usersSnapshot.docs.filter(u => !mockUserIds.includes(u.id)).length === 0) {
-      console.log("[FIREBASE] Firestore database is empty! Seeding clean local records...");
-      const colsToSeed = ["users", "activities", "posts", "goals", "communities", "kofu", "bs_subscription", "chats", "stories"];
-      for (const col of colsToSeed) {
-        const items = localDbSeed[col] || [];
-        for (const item of items) {
-          const docId = item.id || `${Date.now()}`;
-          const cleanItem = { ...item };
-          delete cleanItem.id;
-          await setDoc(doc(db, col, docId), cleanItem);
-        }
-      }
-      console.log("[FIREBASE] Seeding of clean local records complete!");
-    } else {
-      // Periodic deletion of mock activities if database exists
-      try {
-        const actCol = collection(db, "activities");
-        const actSnap = await getDocs(actCol);
-        for (const actDoc of actSnap.docs) {
-          const actData = actDoc.data();
-          if (mockUserIds.includes(actData.userId || '')) {
-            await deleteDoc(doc(db, "activities", actDoc.id));
-          }
-        }
-      } catch (e) {}
-    }
-
-    // Pull remaining clean cloud documents safely
-    console.log("[FIREBASE] Pulling cloud documents safely...");
-    const collections = ["users", "activities", "posts", "goals", "communities", "kofu", "bs_subscription", "chats", "stories", "reminders", "persistent_media"];
-    for (const col of collections) {
-      const colRef = collection(db, col);
-      const snapshot = await getDocs(colRef);
-      const items: any[] = [];
-      snapshot.forEach(docSnap => {
-        const id = docSnap.id;
-        // Make sure we never load Carlos, Mariana, Antonio or Beatriz
-        if (col === "users" && mockUserIds.includes(id)) return;
-        if (col === "bs_subscription" && mockUserIds.includes(id)) return;
-        if (col === "communities" && mockCommIds.includes(id)) return;
-        if (col === "posts" && mockPostIds.includes(id)) return;
-        
-        const itemData = docSnap.data();
-        if (mockUserIds.includes(itemData.userId || '')) return;
-        if (col === "posts" && mockUserIds.includes(itemData.userId || '')) return;
-
-        let finalData = { ...itemData };
-        if (col === "users" && id === "user-sdvtv37y6") {
-          if (finalData.email === "silvalopesnara24@gmail.com") {
-            finalData.email = "nara.gabriela@gmail.com";
-            console.log("[FIREBASE] Migrating user-sdvtv37y6 cloud email to nara.gabriela@gmail.com");
-            setDoc(doc(db, "users", "user-sdvtv37y6"), finalData).catch(err => {
-              console.error("[FIREBASE] Failed writing migrated email back to cloud:", err.message);
-            });
-          }
-        }
-
-        items.push({ id, ...finalData });
-      });
-
-      if (col === "posts") {
-        items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      }
-      dbData[col] = items;
-    }
-    
-    dbData.system_config = { trialStartDate: new Date().toISOString() };
-    
-    // Mirror synchronized cloud state back to local file cache
-    try {
-      fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), "utf8");
-      console.log("[FIREBASE] Sync state mirrored correctly to local database.json cache.");
-    } catch (saveErr: any) {
-      console.error("[FIREBASE] Mirror sync to filesystem failed:", saveErr.message);
-    }
-
-    console.log("[FIREBASE] Success! Persistent in-memory synchronization established safely.");
-  } catch (error) {
-    console.error("[FIREBASE] Sync loading issues, falling back to JSON:", error);
-    dbData = localDbSeed;
-  }
+  // Initialize in-memory cache with local records
+  dbData = localDbSeed;
+  console.log("[FIREBASE] Initialized database state smoothly from local JSON cache.");
+  return;
 }
 
 // Persist document changes
-async function persistDoc(colName: string, docId: string, data: any) {
+async function persistDoc(colName: string, docId: string, data: any, idToken?: string) {
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), "utf8");
   } catch (e) {
     // local failure
   }
-  if (!db) return;
+  if (!firebaseConfig) return;
+  if (!idToken) {
+    console.warn(`[FIREBASE] Skipped Firestore write for ${colName}/${docId} because no ID Token is available.`);
+    return;
+  }
+
+  const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/${colName}/${docId}`;
+  
+  const fields: any = {};
+  for (const k of Object.keys(data)) {
+    if (k === "id") continue;
+    const val = data[k];
+    if (val !== undefined && val !== null) {
+      const fVal = toFirestoreValue(val);
+      if (fVal !== null) {
+        fields[k] = fVal;
+      }
+    }
+  }
+
   try {
-    const docRef = doc(db, colName, docId);
-    const clean = { ...data };
-    delete clean.id; // avoid duplicate id property inside doc fields
-    await setDoc(docRef, clean);
-  } catch (error) {
-    console.error(`[FIREBASE] Persistent write failed on ${colName}/${docId}:`, error);
+    const res = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${idToken}`
+      },
+      body: JSON.stringify({ fields })
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error(`[FIREBASE_REST] Write patch failed on ${colName}/${docId}:`, errText);
+    }
+  } catch (error: any) {
+    console.error(`[FIREBASE_REST] Write exception on ${colName}/${docId}:`, error.message);
   }
 }
 
 // Remove document changes
-async function removeDoc(colName: string, docId: string) {
+async function removeDoc(colName: string, docId: string, idToken?: string) {
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), "utf8");
   } catch (e) {
     // local failure
   }
-  if (!db) return;
+  if (!firebaseConfig) return;
+  if (!idToken) {
+    console.warn(`[FIREBASE] Skipped Firestore delete for ${colName}/${docId} because no ID Token is available.`);
+    return;
+  }
+
+  const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/${colName}/${docId}`;
   try {
-    const docRef = doc(db, colName, docId);
-    await deleteDoc(docRef);
-  } catch (error) {
-    console.error(`[FIREBASE] Persistent delete failed on ${colName}/${docId}:`, error);
+    const res = await fetch(url, {
+      method: "DELETE",
+      headers: {
+        "Authorization": `Bearer ${idToken}`
+      }
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error(`[FIREBASE_REST] Delete failed on ${colName}/${docId}:`, errText);
+    }
+  } catch (error: any) {
+    console.error(`[FIREBASE_REST] Delete exception on ${colName}/${docId}:`, error.message);
   }
 }
 
@@ -364,7 +321,10 @@ function readDB() {
 }
 
 // Helper to write database (Stores data and propagates precise diffs to Firestore)
-function writeDB(data: any) {
+function writeDB(data: any, idToken?: string) {
+  const context = requestContext.getStore() as any;
+  const activeToken = idToken || context?.idToken;
+
   // Keep the previous global database content for diff comparisons
   const previousData = dbData;
   
@@ -378,9 +338,9 @@ function writeDB(data: any) {
   }
 
   // propagate change differences to Firebase Firestore asynchronously
-  if (!db) return;
+  if (!firebaseConfig) return;
 
-  const collections = ["users", "activities", "posts", "goals", "communities", "kofu", "bs_subscription", "chats", "stories", "persistent_media"];
+  const collections = ["users", "activities", "posts", "goals", "communities", "kofu", "bs_subscription", "chats", "stories", "persistent_media", "memories", "notices"];
   
   for (const col of collections) {
     const prevList = previousData[col] || [];
@@ -406,7 +366,7 @@ function writeDB(data: any) {
       });
       
       if (!prevItem || JSON.stringify(prevItem) !== JSON.stringify(newItem)) {
-        persistDoc(col, docId, newItem);
+        persistDoc(col, docId, newItem, activeToken);
       }
     }
     
@@ -430,40 +390,65 @@ function writeDB(data: any) {
       });
       
       if (!existsInNew) {
-        removeDoc(col, docId);
+        removeDoc(col, docId, activeToken);
       }
     }
   }
 }
 
-// Helper to reliably update and calculate user active streaks without double-login inflation
+// Helper to reliably update and calculate user active streaks from history of activities and logs
 function updateAndCalculateUserStreak(user: any, dbData: any, logTimestamp?: string) {
   if (!user) return;
 
-  const todayStr = (logTimestamp || new Date().toISOString()).split("T")[0];
+  const userActs = (dbData.activities || []).filter((a: any) => a.userId === user.id);
+  
+  // Safe timezone date strings in America/Sao_Paulo (sv-SE gives YYYY-MM-DD format)
+  const getLocalSaoPauloDateString = (dateInput?: string | number | Date) => {
+    const d = dateInput ? new Date(dateInput) : new Date();
+    return d.toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+  };
 
-  // If there's no streak or lastActive, initialize as 1
-  if (user.streak === undefined || user.streak === null || user.streak === 0 || !user.lastActive) {
-    user.streak = 1;
+  if (userActs.length === 0 && !logTimestamp) {
+    if (user.streak === undefined || user.streak === null) {
+      user.streak = 0;
+    }
     return;
   }
 
-  const lastActiveStr = user.lastActive.split("T")[0];
-
-  const d1 = new Date(todayStr);
-  const d2 = new Date(lastActiveStr);
-  const utc1 = Date.UTC(d1.getUTCFullYear(), d1.getUTCMonth(), d1.getUTCDate());
-  const utc2 = Date.UTC(d2.getUTCFullYear(), d2.getUTCMonth(), d2.getUTCDate());
-  const diffDays = Math.round((utc1 - utc2) / (1000 * 60 * 60 * 24));
-
-  if (diffDays === 1) {
-    // Yesterday: increment streak correctly
-    user.streak = (user.streak || 0) + 1;
-  } else if (diffDays > 1) {
-    // Broken streak (more than 1 day has passed without activity): reset to 1
-    user.streak = 1;
+  // Coleta as datas únicas (YYYY-MM-DD) de todas as atividades na timezone do usuário
+  const dates = userActs.map((a: any) => getLocalSaoPauloDateString(a.timestamp));
+  if (logTimestamp) {
+    dates.push(getLocalSaoPauloDateString(logTimestamp));
   }
-  // If diffDays === 0 (same day), we keep user.streak exactly as it is (no double counting or resetting)
+
+  const uniqueDays = Array.from(new Set(dates)) as string[];
+  uniqueDays.sort((a, b) => b.localeCompare(a)); // Ordena em ordem decrescente (mais recente primeiro)
+
+  const todayStr = getLocalSaoPauloDateString();
+  const yesterdayStr = getLocalSaoPauloDateString(new Date(Date.now() - 24 * 60 * 60 * 1000));
+
+  // Regra de negócio: Se o registro mais recente não for hoje nem ontem, a sequência está quebrada (0 dias)
+  if (uniqueDays[0] !== todayStr && uniqueDays[0] !== yesterdayStr) {
+    user.streak = 0;
+    return;
+  }
+
+  // Calcula a sequência consecutiva contando de trás para frente no fuso local
+  let calculatedStreak = 1;
+  for (let i = 0; i < uniqueDays.length - 1; i++) {
+    const d1 = new Date(uniqueDays[i]);
+    const d2 = new Date(uniqueDays[i + 1]);
+    const diffTime = d1.getTime() - d2.getTime();
+
+    const actualDiff = Math.abs(Math.round(diffTime / (1000 * 60 * 60 * 24)));
+    if (actualDiff === 1) {
+      calculatedStreak++;
+    } else if (actualDiff > 1) {
+      break; // Sequência interrompida
+    }
+  }
+
+  user.streak = calculatedStreak;
 }
 
 app.use(express.json({ limit: "150mb" }));
@@ -614,11 +599,95 @@ function rateLimiter(req: any, res: any, next: any) {
 
 app.use(rateLimiter);
 
+app.use((req: any, res: any, next: any) => {
+  const authHeader = req.headers["authorization"];
+  let idToken = undefined;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    idToken = authHeader.substring(7);
+    req.idToken = idToken;
+  }
+  requestContext.run({ idToken }, () => {
+    next();
+  });
+});
+
+app.get("/api/firebase-config", (req, res) => {
+  if (firebaseConfig) {
+    res.json({
+      apiKey: firebaseConfig.apiKey,
+      authDomain: firebaseConfig.authDomain,
+      projectId: firebaseConfig.projectId,
+      storageBucket: firebaseConfig.storageBucket,
+      messagingSenderId: firebaseConfig.messagingSenderId,
+      appId: firebaseConfig.appId,
+    });
+  } else {
+    res.status(404).json({ error: "Firebase configuration not loaded on server." });
+  }
+});
+
+app.get("/api/debug/intercepted-emails", async (req: any, res) => {
+  // 1. Unconditional production block
+  if (process.env.NODE_ENV === "production") {
+    return res.status(403).json({ error: "Access to debug resources is strictly forbidden in production mode." });
+  }
+
+  // 2. Defense-in-depth: Require a valid Firebase token with admin/developer role
+  // even in non-production environments to prevent unauthorized remote access.
+  const idToken = req.idToken;
+  if (!idToken) {
+    return res.status(401).json({ error: "Authentication token is required to access debug resources." });
+  }
+
+  try {
+    const payload = await verifyFirebaseToken(idToken, firebaseConfig.projectId);
+    if (!payload || !payload.email) {
+      return res.status(401).json({ error: "Invalid authentication token." });
+    }
+
+    const email = String(payload.email).toLowerCase();
+
+    // Lookup user database profile role for strict DB RBAC check
+    const dbData = readDB();
+    const matchedUser = dbData.users.find((u: any) => u.email && u.email.toLowerCase() === email);
+    const hasAdminRole = matchedUser && hasRole(matchedUser, ["admin", "developer"]);
+
+    if (!hasAdminRole) {
+      return res.status(403).json({ error: "Forbidden: You do not have the required role to access debug resources." });
+    }
+
+    res.json(interceptedEmails);
+  } catch (err: any) {
+    console.error("[DEBUG AUTH] Error checking debug permissions:", err);
+    res.status(500).json({ error: "Internal server error during authorization check." });
+  }
+});
+
 // Get list of users with stats computed (email stripped for public, kept only for matching requested authenticated user)
-app.get("/api/users", (req, res) => {
+app.get("/api/users", (req: any, res) => {
   const dbData = readDB();
   const requesterId = req.query.userId || req.headers["x-user-id"];
+  const queryEmail = req.query.email ? String(req.query.email).trim().toLowerCase() : null;
   
+  // Recalcular streaks dinamicamente para manter o painel de desenvolvimento e leaderboard 100% atualizados
+  let hasChanges = false;
+  dbData.users.forEach((u: any) => {
+    const oldStreak = u.streak || 0;
+    updateAndCalculateUserStreak(u, dbData);
+    if ((u.streak || 0) !== oldStreak) {
+      hasChanges = true;
+    }
+  });
+  if (hasChanges) {
+    writeDB(dbData, req.idToken);
+  }
+  
+  if (queryEmail) {
+    // Retorna apenas se o e-mail correspondente existir, e mantém o e-mail no retorno para as verificações de existência do frontend.
+    const matched = (dbData.users || []).filter((u: any) => u.email && u.email.toLowerCase() === queryEmail);
+    return res.json(matched);
+  }
+
   const publicUsers = (dbData.users || []).map((u: any) => {
     if (requesterId && u.id === requesterId) {
       return u;
@@ -631,8 +700,22 @@ app.get("/api/users", (req, res) => {
 });
 
 // Auth / Login-Register route (Simplificado/Sem Senhas)
-app.post("/api/auth/login-register", (req, res) => {
-  const { email, displayName, avatar, city, division, organization, district, region, subDistrict, horizontalGroup, localGroup, horizontalGroupOfficial } = req.body;
+app.post("/api/auth/login-register", async (req: any, res) => {
+  const { 
+    id: bodyId,
+    email, 
+    displayName, 
+    avatar, 
+    city, 
+    division, 
+    organization, 
+    district, 
+    region, 
+    subDistrict, 
+    horizontalGroup, 
+    localGroup, 
+    horizontalGroupOfficial 
+  } = req.body;
   
   if (!email) {
     return res.status(400).json({ error: "E-mail é obrigatório." });
@@ -647,8 +730,17 @@ app.post("/api/auth/login-register", (req, res) => {
     return res.status(400).json({ error: "Foto de perfil suspeita bloqueada por segurança." });
   }
 
+  // Support UIDs from Firebase Auth Token if available
+  let id = bodyId || "user-" + Math.random().toString(36).substr(2, 9);
+  if (req.idToken && firebaseConfig) {
+    const payload = await verifyFirebaseToken(req.idToken, firebaseConfig.projectId);
+    if (payload) {
+      id = payload.sub as string;
+    }
+  }
+
   const dbData = readDB();
-  let user = dbData.users.find((u: any) => u.email.toLowerCase() === email.toLowerCase());
+  let user = dbData.users.find((u: any) => u.id === id || u.email.toLowerCase() === email.toLowerCase());
 
   if (!user) {
     // Novo usuário: Autocadastro sem atrito e sem senhas
@@ -663,7 +755,7 @@ app.post("/api/auth/login-register", (req, res) => {
 
     const finalAvatar = avatar || DEFAULT_AVATAR;
     user = {
-      id: "user-" + Math.random().toString(36).substr(2, 9),
+      id,
       name: safeName,
       displayName: safeDisplayName,
       email: email.toLowerCase(),
@@ -698,7 +790,7 @@ app.post("/api/auth/login-register", (req, res) => {
       status: "nao_realizado",
       updatedAt: new Date().toISOString()
     });
-    writeDB(dbData);
+    writeDB(dbData, req.idToken);
     
     // Send welcome email immediately in background
     sendConfirmationEmail(user).catch(err => {
@@ -709,14 +801,14 @@ app.post("/api/auth/login-register", (req, res) => {
     const logTimestamp = new Date().toISOString();
     updateAndCalculateUserStreak(user, dbData, logTimestamp);
     user.lastActive = logTimestamp;
-    writeDB(dbData);
+    writeDB(dbData, req.idToken);
   }
 
   res.json(user);
 });
 
 // Dedicated endpoint for Acessar Conta (Aba 1) - Only allows existing users
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", (req: any, res) => {
   const { email } = req.body;
   if (!email) {
     return res.status(400).json({ error: "E-mail é obrigatório." });
@@ -742,30 +834,163 @@ app.post("/api/auth/login", (req, res) => {
   const logTimestamp = new Date().toISOString();
   updateAndCalculateUserStreak(user, dbData, logTimestamp);
   user.lastActive = logTimestamp;
-  writeDB(dbData);
+  writeDB(dbData, req.idToken);
 
   res.json(user);
 });
 
+// Endpoint de estágio de cadastro persistente no servidor, para mitigar perdas em abas privadas/novas
+app.post("/api/auth/stage-registration", (req: any, res) => {
+  const { email, ...details } = req.body;
+  
+  if (!email) {
+    return res.status(400).json({ error: "E-mail é obrigatório." });
+  }
+
+  // Validação estrita do padrão de E-mail
+  if (email.length > 150 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: "Formato de E-mail inválido." });
+  }
+
+  const dbData = readDB();
+  dbData.staged_registrations = dbData.staged_registrations || [];
+
+  // Purgar registros com mais de 1 hora
+  const oneHourAgo = Date.now() - (60 * 60 * 1000);
+  dbData.staged_registrations = dbData.staged_registrations.filter((sr: any) => {
+    return sr.stagedAt && new Date(sr.stagedAt).getTime() >= oneHourAgo;
+  });
+  
+  // Remove eventuais estágios anteriores para o mesmo e-mail
+  dbData.staged_registrations = dbData.staged_registrations.filter((sr: any) => sr.email.toLowerCase() !== email.toLowerCase());
+  
+  dbData.staged_registrations.push({
+    email: email.toLowerCase(),
+    details,
+    stagedAt: new Date().toISOString()
+  });
+  
+  writeDB(dbData);
+  res.json({ success: true });
+});
+
+function migrateUserIdInDB(dbData: any, oldId: string, newId: string) {
+  if (!oldId || !newId || oldId === newId) return;
+
+  // 1. Users table
+  const user = dbData.users.find((u: any) => u.id === oldId);
+  if (user) {
+    user.id = newId;
+  }
+
+  // 2. Kofu table
+  if (dbData.kofu) {
+    dbData.kofu.forEach((k: any) => {
+      if (k.userId === oldId) k.userId = newId;
+      if (k.id && k.id.startsWith(oldId + "_")) {
+        k.id = k.id.replace(oldId + "_", newId + "_");
+      }
+    });
+  }
+
+  // 3. BS Subscription table
+  if (dbData.bs_subscription) {
+    dbData.bs_subscription.forEach((s: any) => {
+      if (s.userId === oldId) s.userId = newId;
+      if (s.id === oldId) s.id = newId;
+    });
+  }
+
+  // 4. Activities table
+  if (dbData.activities) {
+    dbData.activities.forEach((a: any) => {
+      if (a.userId === oldId) a.userId = newId;
+    });
+  }
+
+  // 5. Posts table
+  if (dbData.posts) {
+    dbData.posts.forEach((p: any) => {
+      if (p.userId === oldId) p.userId = newId;
+    });
+  }
+
+  // 6. Goals table
+  if (dbData.goals) {
+    dbData.goals.forEach((g: any) => {
+      if (g.userId === oldId) g.userId = newId;
+    });
+  }
+
+  // 7. Chats table
+  if (dbData.chats) {
+    dbData.chats.forEach((c: any) => {
+      if (c.userId === oldId) c.userId = newId;
+    });
+  }
+
+  // 8. Reminders table
+  if (dbData.reminders) {
+    dbData.reminders.forEach((r: any) => {
+      if (r.userId === oldId) r.userId = newId;
+    });
+  }
+
+  // 9. Stories table
+  if (dbData.stories) {
+    dbData.stories.forEach((st: any) => {
+      if (st.userId === oldId) st.userId = newId;
+    });
+  }
+}
+
 // Dedicated endpoint for Novos Bodhishapers (Aba 2) - Only allows new sign ups
-app.post("/api/auth/register", (req, res) => {
+app.post("/api/auth/register", async (req: any, res) => {
   const {
+    id: bodyId,
     email,
-    name,
-    displayName,
-    avatar,
-    division,
-    region,
-    subDistrict,
-    district,
-    community,
-    block,
-    horizontalGroup
+    name: bodyName,
+    displayName: bodyDisplayName,
+    avatar: bodyAvatar,
+    division: bodyDivision,
+    region: bodyRegion,
+    subDistrict: bodySubDistrict,
+    district: bodyDistrict,
+    community: bodyCommunity,
+    block: bodyBlock,
+    horizontalGroup: bodyHorizontalGroup,
+    birthdate: bodyBirthdate
   } = req.body;
 
   if (!email) {
     return res.status(400).json({ error: "E-mail é obrigatório." });
   }
+
+  const dbData = readDB();
+  dbData.staged_registrations = dbData.staged_registrations || [];
+
+  // Purgar registros de estágio expirados com mais de 1 hora
+  const oneHourAgo = Date.now() - (60 * 60 * 1000);
+  dbData.staged_registrations = dbData.staged_registrations.filter((sr: any) => {
+    return sr.stagedAt && new Date(sr.stagedAt).getTime() >= oneHourAgo;
+  });
+
+  const staged = dbData.staged_registrations.find((sr: any) => sr.email.toLowerCase() === email.toLowerCase());
+  const stagedDetails = staged ? staged.details : {};
+
+  // Fusão segura dos dados: Parâmetros do body têm preferência, depois dados em estágio
+  const name = bodyName || stagedDetails.name;
+  const displayName = bodyDisplayName || stagedDetails.displayName;
+  const avatar = bodyAvatar || stagedDetails.avatar;
+  const division = bodyDivision || stagedDetails.division;
+  const region = bodyRegion || stagedDetails.region;
+  const subDistrict = bodySubDistrict || stagedDetails.subDistrict;
+  const district = bodyDistrict || stagedDetails.district;
+  const community = bodyCommunity || stagedDetails.community;
+  const block = bodyBlock || stagedDetails.block;
+  const horizontalGroup = bodyHorizontalGroup || stagedDetails.horizontalGroup;
+  const birthdate = bodyBirthdate || stagedDetails.birthdate || "";
+
   if (!name || !displayName) {
     return res.status(400).json({ error: "Nome completo e como gostaria de ser chamado(a) são obrigatórios." });
   }
@@ -778,10 +1003,50 @@ app.post("/api/auth/register", (req, res) => {
     return res.status(400).json({ error: "Formato ou endereço da foto de perfil suscetível a bloqueio de segurança." });
   }
 
-  const dbData = readDB();
+  // Support UIDs from Firebase Auth Token if available
+  let id = bodyId || "user-" + Math.random().toString(36).substr(2, 9);
+  if (req.idToken && firebaseConfig) {
+    const payload = await verifyFirebaseToken(req.idToken, firebaseConfig.projectId);
+    if (payload) {
+      id = payload.sub as string;
+    }
+  }
+
   const existingUser = dbData.users.find((u: any) => u.email.toLowerCase() === email.toLowerCase());
 
   if (existingUser) {
+    // Se o login foi autenticado via e-mail link (req.idToken presente) mas o ID atual no DB é diferente (ex: id provisório offline),
+    // realizamos a migração automática para unificar com o Firebase UID sem perder os dados históricos.
+    if (existingUser.id !== id && req.idToken) {
+      const oldId = existingUser.id;
+      migrateUserIdInDB(dbData, oldId, id);
+      
+      // Mescla/atualiza as informações do perfil com as enviadas
+      if (name) existingUser.name = sanitizeInput(name);
+      if (displayName) existingUser.displayName = sanitizeInput(displayName);
+      if (avatar) existingUser.avatar = avatar;
+      if (division) existingUser.division = division;
+      if (region) existingUser.region = sanitizeInput(region);
+      if (subDistrict) existingUser.subDistrict = sanitizeInput(subDistrict);
+      if (district) existingUser.district = sanitizeInput(district);
+      if (community) existingUser.block = sanitizeInput(block);
+      if (horizontalGroup) existingUser.horizontalGroup = sanitizeInput(horizontalGroup);
+      if (birthdate) existingUser.birthdate = birthdate;
+      existingUser.updatedAt = new Date().toISOString();
+
+      // Limpa os registros de estágio após cadastro bem-sucedido
+      dbData.staged_registrations = (dbData.staged_registrations || []).filter((sr: any) => sr.email.toLowerCase() !== email.toLowerCase());
+
+      writeDB(dbData, req.idToken);
+
+      // Envia e-mail de boas-vindas assincronamente (sem bloquear) se o e-mail estiver configurado
+      sendConfirmationEmail(existingUser).catch(err => {
+        console.error("[EMAIL SYSTEM] Existing user migrated welcome email trigger error:", err);
+      });
+
+      return res.json(existingUser);
+    }
+
     return res.status(400).json({
       error: "Este e-mail já possui cadastro. Por favor, utilize a aba Acessar Conta para entrar."
     });
@@ -798,7 +1063,7 @@ app.post("/api/auth/register", (req, res) => {
 
   const finalAvatar = avatar || DEFAULT_AVATAR;
   const user = {
-    id: "user-" + Math.random().toString(36).substr(2, 9),
+    id,
     name: safeName,
     displayName: safeDisplayName,
     email: email.toLowerCase(),
@@ -817,7 +1082,8 @@ app.post("/api/auth/register", (req, res) => {
     localGroup: "",
     horizontalGroupOfficial: true,
     lastActive: new Date().toISOString(),
-    trialEnds: new Date(Date.now() + 30 * 86400000).toISOString()
+    trialEnds: new Date(Date.now() + 30 * 86400000).toISOString(),
+    birthdate
   };
 
   dbData.users.push(user);
@@ -837,7 +1103,10 @@ app.post("/api/auth/register", (req, res) => {
     updatedAt: new Date().toISOString()
   });
 
-  writeDB(dbData);
+  // Limpa o estágio após cadastro bem-sucedido
+  dbData.staged_registrations = dbData.staged_registrations.filter((sr: any) => sr.email.toLowerCase() !== email.toLowerCase());
+
+  writeDB(dbData, req.idToken);
 
   // Send welcome HTML email background job
   sendConfirmationEmail(user).catch(err => {
@@ -958,12 +1227,12 @@ app.post("/api/upload", (req, res) => {
 });
 
 // Update User Profile route
-app.post("/api/users/update", (req, res) => {
+app.post("/api/users/update", (req: any, res) => {
   const { 
     userId, name, displayName, avatar, city, division, organization, district, subDistrict, region,
     height, initialWeight, currentWeight, targetWeight, weightHistory, bodyMeasurements, progressPhotos,
     daimokuBalance, block, localGroup, horizontalGroup, horizontalGroupOfficial, accessibility,
-    pushEnabled, pushToken, birthdate
+    pushEnabled, pushToken, birthdate, lang, theme, socials
   } = req.body;
 
   if (!userId) {
@@ -1023,6 +1292,9 @@ app.post("/api/users/update", (req, res) => {
   if (accessibility !== undefined) user.accessibility = accessibility;
   if (pushEnabled !== undefined) user.pushEnabled = Boolean(pushEnabled);
   if (pushToken !== undefined) user.pushToken = pushToken;
+  if (lang !== undefined) user.lang = lang;
+  if (theme !== undefined) user.theme = theme;
+  if (socials !== undefined) user.socials = socials;
   
   user.lastActive = new Date().toISOString();
 
@@ -1056,7 +1328,7 @@ app.post("/api/users/update", (req, res) => {
     });
   }
 
-  writeDB(dbData);
+  writeDB(dbData, req.idToken);
   res.json(user);
 });
 
@@ -1068,6 +1340,12 @@ app.get("/api/dashboard-stats/:userId", (req, res) => {
   const user = dbData.users.find((u: any) => u.id === userId);
   if (!user) {
     return res.status(404).json({ error: "Usuário não encontrado." });
+  }
+
+  const oldStreak = user.streak || 0;
+  updateAndCalculateUserStreak(user, dbData);
+  if ((user.streak || 0) !== oldStreak) {
+    writeDB(dbData);
   }
 
   const userActivities = dbData.activities.filter((a: any) => a.userId === userId);
@@ -1102,7 +1380,7 @@ app.get("/api/dashboard-stats/:userId", (req, res) => {
 
 // Logs activities and triggers calculations + automated IA comments
 app.post("/api/activities/log", async (req, res) => {
-  const { userId, type, minutes, exerciseCategory, exerciseType, notes, customTimestamp } = req.body;
+  const { userId, type, minutes, exerciseCategory, exerciseType, notes, customTimestamp, startTimestamp, endTimestamp } = req.body;
 
   // Proteção rigorosa contra injeção de parâmetros e scripts maliciosos nos logs de atividade
   if (!userId || userId.length > 128 || hasMalwareOrSuspiciousPatterns(userId)) {
@@ -1175,15 +1453,17 @@ app.post("/api/activities/log", async (req, res) => {
     }
     
     // REGRA DE ACÚMULO DE DAIMOKU PARA PONTUAÇÃO
-    // A cada 30 minutos acumulados totais de daimoku histórico/progressivo: +1 ponto
+    // A cada 30 minutos acumulados totais de daimoku histórico/progressivo: +1 ponto.
+    // Limite de negócio rígido: máximo de 2 pontos por upload de Daimoku simples.
     const currentBalance = user.daimokuBalance || 0;
     const totalMinutes = currentBalance + mins;
-    points = Math.floor(totalMinutes / 30);
+    let rawPoints = Math.floor(totalMinutes / 30);
+    points = rawPoints > 2 ? 2 : rawPoints;
     const newBalance = totalMinutes % 30;
     
     user.daimokuBalance = newBalance;
     
-    successMsg = `Registrados ${mins} minutos de Daimoku! Seu saldo anterior era de ${currentBalance} min. Total acumulado: ${totalMinutes} min. Você ganhou +${points} ${points === 1 ? 'ponto' : 'pontos'}! Saldo restante acumulado para o próximo ponto: ${newBalance} min.`;
+    successMsg = `Registrados ${mins} minutos de Daimoku! Seu saldo anterior era de ${currentBalance} min. Total acumulado: ${totalMinutes} min. Você ganhou +${points} ${points === 1 ? 'ponto' : 'pontos'} (limitado a 2 por upload)! Saldo restante acumulado para o próximo ponto: ${newBalance} min.`;
   } else if (type === "exercise") {
     const mins = Number(minutes);
     if (isNaN(mins) || mins <= 0) {
@@ -1213,9 +1493,13 @@ app.post("/api/activities/log", async (req, res) => {
     category: exerciseCategory || "",
     subType: exerciseType || "",
     minutes: minutes ? Number(minutes) : undefined,
+    duration: minutes ? Number(minutes) : undefined,
     points,
     notes: safeNotes || "",
-    timestamp: logTimestamp
+    timestamp: logTimestamp,
+    date: logTimestamp.split("T")[0],
+    startTimestamp: startTimestamp || undefined,
+    endTimestamp: endTimestamp || undefined
   };
   dbData.activities.push(newActivity);
 
@@ -1375,7 +1659,10 @@ app.post("/api/activities/log-combined", async (req, res) => {
   if (daimoku && dMins > 0) {
     const currentBalance = user.daimokuBalance || 0;
     const totalMinutes = currentBalance + dMins;
-    const dPoints = Math.floor(totalMinutes / 30);
+    let dPoints = Math.floor(totalMinutes / 30);
+    if (dPoints > 2) {
+      dPoints = 2;
+    }
     const newBalance = totalMinutes % 30;
     
     user.daimokuBalance = newBalance;
@@ -1386,8 +1673,10 @@ app.post("/api/activities/log-combined", async (req, res) => {
       userId,
       type: "daimoku",
       minutes: dMins,
+      duration: dMins,
       points: dPoints,
-      timestamp: logTimestamp
+      timestamp: logTimestamp,
+      date: logTimestamp.split("T")[0]
     };
     dbData.activities.push(dAct);
     createdActivities.push(dAct);
@@ -1823,7 +2112,7 @@ app.delete("/api/posts/:postId", (req, res) => {
   // Custom flexible verification: owner check, nickname match, name match, or admin override
   const isOwner = post.userId === userId;
   const isNameMatch = user && (post.userName === user.name || post.userName === user.displayName);
-  const isAdmin = userId === "admin" || (user && user.email === "nara.gabriela@gmail.com");
+  const isAdmin = hasRole(user, "admin");
 
   if (!isOwner && !isNameMatch && !isAdmin) {
     return res.status(403).json({ error: "Não autorizado a excluir a publicação de terceiros." });
@@ -1903,7 +2192,10 @@ app.put("/api/posts/:postId", (req, res) => {
     return res.status(404).json({ error: "Publicação não encontrada." });
   }
 
-  if (post.userId !== userId && userId !== "admin") {
+  const user = dbData.users.find((u: any) => u.id === userId);
+  const isAdmin = hasRole(user, "admin");
+
+  if (post.userId !== userId && !isAdmin) {
     return res.status(403).json({ error: "Não autorizado a editar a publicação de terceiros." });
   }
 
@@ -1946,8 +2238,10 @@ app.post("/api/posts/:postId/comments/:commentId/delete", (req, res) => {
   }
 
   const comment = post.comments[commentIndex];
+  const user = dbData.users.find((u: any) => u.id === userId);
+  const isAdmin = hasRole(user, "admin");
   // Allow comment author or post owner or admin to delete comments
-  if (comment.userId !== userId && post.userId !== userId && userId !== "admin") {
+  if (comment.userId !== userId && post.userId !== userId && !isAdmin) {
     return res.status(403).json({ error: "Sem autorização para excluir este comentário." });
   }
 
@@ -1984,7 +2278,10 @@ app.post("/api/posts/:postId/comments/:commentId/update", (req, res) => {
     return res.status(404).json({ error: "Comentário não encontrado." });
   }
 
-  if (comment.userId !== userId && userId !== "admin") {
+  const user = dbData.users.find((u: any) => u.id === userId);
+  const isAdmin = hasRole(user, "admin");
+
+  if (comment.userId !== userId && !isAdmin) {
     return res.status(403).json({ error: "Não autorizado a editar o comentário de terceiros." });
   }
 
@@ -2173,6 +2470,334 @@ app.post("/api/communities", (req, res) => {
   dbData.communities.push(newComm);
   writeDB(dbData);
   res.json(newComm);
+});
+
+app.post("/api/communities/:id/join", (req, res) => {
+  const { id } = req.params;
+  const { userId } = req.body;
+  if (!id || !userId) {
+    return res.status(400).json({ error: "Parâmetros id e userId são obrigatórios." });
+  }
+
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) {
+    return res.status(404).json({ error: "Desafio não encontrado." });
+  }
+
+  const comm = dbData.communities[index];
+  if (!comm.participants) {
+    comm.participants = [];
+  }
+  if (!comm.participants.includes(userId)) {
+    comm.participants.push(userId);
+  }
+  comm.membersCount = comm.participants.length;
+
+  dbData.communities[index] = comm;
+  writeDB(dbData);
+  res.json({ success: true, community: comm });
+});
+
+app.post("/api/communities/:id/leave", (req, res) => {
+  const { id } = req.params;
+  const { userId } = req.body;
+  if (!id || !userId) {
+    return res.status(400).json({ error: "Parâmetros id e userId são obrigatórios." });
+  }
+
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) {
+    return res.status(404).json({ error: "Desafio não encontrado." });
+  }
+
+  const comm = dbData.communities[index];
+  if (!comm.participants) {
+    comm.participants = [];
+  }
+  comm.participants = comm.participants.filter((uid: string) => uid !== userId);
+  comm.membersCount = comm.participants.length;
+
+  dbData.communities[index] = comm;
+  writeDB(dbData);
+  res.json({ success: true, community: comm });
+});
+
+// Community Notices / Mural de Avisos endpoints
+app.get("/api/notices", (req: any, res: any) => {
+  const dbData = readDB();
+  if (!dbData.notices) {
+    dbData.notices = [];
+  }
+  res.json(dbData.notices);
+});
+
+// Helper validation middleware/check for notices leadership roles
+async function extractAndVerifyLeader(req: any) {
+  if (!req.idToken || !firebaseConfig) return null;
+  try {
+    const payload = await verifyFirebaseToken(req.idToken, firebaseConfig.projectId);
+    if (!payload) return null;
+    const dbData = readDB();
+    const user = dbData.users.find((u: any) => u.id === payload.sub);
+    if (user && (hasRole(user, ["admin", "leader", "district_leader", "regional_leader", "community_admin"]) || user.isAdmin === true)) {
+      return user;
+    }
+  } catch (err) {
+    console.error("[AUTH_CHECK_NOTICE] Token validation failed:", err);
+  }
+  return null;
+}
+
+app.post("/api/notices", async (req: any, res: any) => {
+  const { type, tag, title, description, deadline, target, maxProgress, color } = req.body;
+  if (!title || !description) {
+    return res.status(400).json({ error: "Título e descrição são obrigatórios." });
+  }
+
+  const leaderUser = await extractAndVerifyLeader(req);
+  if (!leaderUser) {
+    return res.status(403).json({ error: "Acesso negado. Apenas administradores e líderes autorizados podem postar no Mural de Avisos." });
+  }
+
+  const dbData = readDB();
+  if (!dbData.notices) {
+    dbData.notices = [];
+  }
+
+  const newNotice = {
+    id: `notice-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    type: type || "announcement",
+    tag: tag || "📢 Aviso",
+    title: String(title).trim(),
+    description: String(description).trim(),
+    deadline: deadline || "",
+    target: target || "Todos os participantes.",
+    currentProgress: 0,
+    maxProgress: maxProgress ? Number(maxProgress) : null,
+    color: color || "from-slate-900/40 to-slate-950/40 border-slate-800 text-slate-350",
+    joinedCount: 0,
+    participants: []
+  };
+
+  dbData.notices.push(newNotice);
+  writeDB(dbData);
+  persistDoc("notices", newNotice.id, newNotice);
+  res.json(newNotice);
+});
+
+app.post("/api/notices/update", async (req: any, res: any) => {
+  const { id, type, tag, title, description, deadline, target, maxProgress, currentProgress, color } = req.body;
+  if (!id) {
+    return res.status(400).json({ error: "ID do aviso é necessário." });
+  }
+
+  const leaderUser = await extractAndVerifyLeader(req);
+  if (!leaderUser) {
+    return res.status(403).json({ error: "Acesso negado. Apenas administradores e líderes autorizados podem editar os avisos." });
+  }
+
+  const dbData = readDB();
+  if (!dbData.notices) dbData.notices = [];
+
+  const index = dbData.notices.findIndex((n: any) => n.id === id);
+  if (index === -1) {
+    return res.status(404).json({ error: "Aviso não encontrado." });
+  }
+
+  const existing = dbData.notices[index];
+  const updatedNotice = {
+    ...existing,
+    type: type || existing.type,
+    tag: tag || existing.tag,
+    title: title !== undefined ? String(title).trim() : existing.title,
+    description: description !== undefined ? String(description).trim() : existing.description,
+    deadline: deadline !== undefined ? deadline : existing.deadline,
+    target: target !== undefined ? target : existing.target,
+    currentProgress: currentProgress !== undefined ? Number(currentProgress) : existing.currentProgress,
+    maxProgress: maxProgress !== undefined ? (maxProgress ? Number(maxProgress) : null) : existing.maxProgress,
+    color: color || existing.color
+  };
+
+  dbData.notices[index] = updatedNotice;
+  writeDB(dbData);
+  persistDoc("notices", id, updatedNotice);
+  res.json(updatedNotice);
+});
+
+app.delete("/api/notices/:id", async (req: any, res: any) => {
+  const { id } = req.params;
+
+  const leaderUser = await extractAndVerifyLeader(req);
+  if (!leaderUser) {
+    return res.status(403).json({ error: "Acesso negado. Apenas administradores e líderes autorizados podem remover avisos do Mural." });
+  }
+
+  const dbData = readDB();
+  if (!dbData.notices) dbData.notices = [];
+
+  const index = dbData.notices.findIndex((n: any) => n.id === id);
+  if (index === -1) {
+    return res.status(404).json({ error: "Aviso não encontrado." });
+  }
+
+  dbData.notices.splice(index, 1);
+  writeDB(dbData);
+  removeDoc("notices", id);
+  res.json({ success: true });
+});
+
+app.post("/api/notices/join", (req: any, res: any) => {
+  const { id, userId } = req.body;
+  if (!id || !userId) {
+    return res.status(400).json({ error: "Parâmetros inválidos." });
+  }
+
+  const dbData = readDB();
+  if (!dbData.notices) dbData.notices = [];
+
+  const index = dbData.notices.findIndex((n: any) => n.id === id);
+  if (index === -1) {
+    return res.status(404).json({ error: "Aviso não encontrado." });
+  }
+
+  const notice = dbData.notices[index];
+  if (!notice.participants) notice.participants = [];
+
+  const uIndex = notice.participants.indexOf(userId);
+  if (uIndex === -1) {
+    notice.participants.push(userId);
+    notice.joinedCount = notice.participants.length;
+    if (notice.maxProgress && notice.currentProgress < notice.maxProgress) {
+      notice.currentProgress = (notice.currentProgress || 0) + 1;
+    }
+  } else {
+    notice.participants.splice(uIndex, 1);
+    notice.joinedCount = notice.participants.length;
+    if (notice.maxProgress && notice.currentProgress > 0) {
+      notice.currentProgress = (notice.currentProgress || 0) - 1;
+    }
+  }
+
+  dbData.notices[index] = notice;
+  writeDB(dbData);
+  persistDoc("notices", id, notice);
+  res.json(notice);
+});
+
+// MuseumOfTheJourney Memories Firestore endpoints
+app.get("/api/memories", async (req: any, res: any) => {
+  const dbData = readDB();
+  if (!dbData.memories) {
+    dbData.memories = [];
+  }
+
+  // If token is validated, return list scoped to user. If not, fallback to req.query.userId or return empty
+  let targetUserId = "";
+  if (req.idToken && firebaseConfig) {
+    try {
+      const payload = await verifyFirebaseToken(req.idToken, firebaseConfig.projectId);
+      if (payload) {
+        targetUserId = payload.sub;
+      }
+    } catch (e) {
+      // invalid token
+    }
+  }
+  
+  if (!targetUserId) {
+    targetUserId = (req.query.userId as string) || "";
+  }
+
+  if (!targetUserId) {
+    return res.json([]);
+  }
+
+  const userMemories = dbData.memories.filter((m: any) => m.userId === targetUserId);
+  res.json(userMemories);
+});
+
+app.post("/api/memories", async (req: any, res: any) => {
+  const { url, caption, tag, date } = req.body;
+  if (!url) {
+    return res.status(400).json({ error: "A URL da foto é obrigatória." });
+  }
+
+  let authenticatedUserId = "";
+  if (req.idToken && firebaseConfig) {
+    try {
+      const payload = await verifyFirebaseToken(req.idToken, firebaseConfig.projectId);
+      if (payload) {
+        authenticatedUserId = payload.sub;
+      }
+    } catch (e) {
+      return res.status(401).json({ error: "Sua autenticação falhou." });
+    }
+  }
+
+  if (!authenticatedUserId) {
+    authenticatedUserId = (req.body.userId as string) || "";
+  }
+
+  if (!authenticatedUserId) {
+    return res.status(401).json({ error: "Usuário não autenticado." });
+  }
+
+  const dbData = readDB();
+  if (!dbData.memories) {
+    dbData.memories = [];
+  }
+
+  const newMemory = {
+    id: `mem-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    userId: authenticatedUserId,
+    url,
+    caption: String(caption || "Memória da Jornada").trim(),
+    tag: String(tag || "Geral").trim(),
+    date: date || new Date().toISOString().split("T")[0]
+  };
+
+  dbData.memories.push(newMemory);
+  writeDB(dbData);
+  persistDoc("memories", newMemory.id, newMemory);
+  res.json(newMemory);
+});
+
+app.delete("/api/memories/:id", async (req: any, res: any) => {
+  const { id } = req.params;
+
+  let authenticatedUserId = "";
+  if (req.idToken && firebaseConfig) {
+    try {
+      const payload = await verifyFirebaseToken(req.idToken, firebaseConfig.projectId);
+      if (payload) {
+        authenticatedUserId = payload.sub;
+      }
+    } catch (e) {
+      return res.status(401).json({ error: "Autenticação falhou." });
+    }
+  }
+
+  const dbData = readDB();
+  if (!dbData.memories) dbData.memories = [];
+
+  const index = dbData.memories.findIndex((m: any) => m.id === id);
+  if (index === -1) {
+    return res.status(404).json({ error: "Memória não localizada." });
+  }
+
+  const memory = dbData.memories[index];
+  
+  // Guard check: enforce only the memory creator can delete it
+  if (authenticatedUserId && memory.userId !== authenticatedUserId) {
+    return res.status(403).json({ error: "Prezado praticante, você não tem autorização para remover memórias de terceiros." });
+  }
+
+  dbData.memories.splice(index, 1);
+  writeDB(dbData);
+  removeDoc("memories", id);
+  res.json({ success: true });
 });
 
 // Group and Challenge Chat messages endpoints
@@ -2547,15 +3172,12 @@ async function bootstrap() {
   try {
     const configPath = path.join(process.cwd(), "firebase-applet-config.json");
     if (fs.existsSync(configPath)) {
-      const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
       const firebaseApp = initializeApp(firebaseConfig);
       db = initializeFirestore(firebaseApp, {
         experimentalAutoDetectLongPolling: true,
       }, firebaseConfig.firestoreDatabaseId || "(default)");
       console.log("[FIREBASE] FireStore Client connection established in project:", firebaseConfig.projectId);
-
-      // Await server token authentication BEFORE loading documents so rules allow it safely
-      await authenticateServerProxy(firebaseApp);
     } else {
       console.warn("[FIREBASE] firebase-applet-config.json not found on disk. Offline mode activated.");
     }

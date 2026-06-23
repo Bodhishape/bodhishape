@@ -26,9 +26,10 @@ interface VictoryStory {
 interface MuralVitoriasProps {
   currentUser: User | null;
   onSelectUser: (user: User) => void;
+  firebaseAuth?: any;
 }
 
-export default function MuralVitorias({ currentUser, onSelectUser }: MuralVitoriasProps) {
+export default function MuralVitorias({ currentUser, onSelectUser, firebaseAuth }: MuralVitoriasProps) {
   const [stories, setStories] = useState<VictoryStory[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -101,13 +102,20 @@ export default function MuralVitorias({ currentUser, onSelectUser }: MuralVitori
       aiComment: chosenPhrase
     };
 
-    fetch("/api/stories", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    })
-      .then(res => res.json())
-      .then(newStory => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const sendStory = async () => {
+      try {
+        if (firebaseAuth?.currentUser) {
+          const token = await firebaseAuth.currentUser.getIdToken();
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+        const res = await fetch("/api/stories", {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload)
+        });
+        const newStory = await res.json();
+        
         // Automatically append the AI incentive bot message as a comment on backend or here
         if (newStory && newStory.id) {
           const aiCommentObj = {
@@ -124,8 +132,12 @@ export default function MuralVitorias({ currentUser, onSelectUser }: MuralVitori
         setTitle("");
         setContent("");
         setShowAddForm(false);
-      })
-      .catch(err => console.error("Erro ao criar relato de vitória:", err));
+      } catch (err) {
+        console.error("Erro ao criar relato de vitória:", err);
+      }
+    };
+
+    sendStory();
   };
 
   const handleLikeStory = (storyId: string) => {

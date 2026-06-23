@@ -11,6 +11,7 @@ interface MuseumOfTheJourneyProps {
   currentUser: User | null;
   activities: Activity[];
   onShareConquest?: (text: string) => void;
+  firebaseAuth?: any;
 }
 
 interface MemoryItem {
@@ -19,6 +20,7 @@ interface MemoryItem {
   caption: string;
   date: string;
   tag: string;
+  userId?: string;
 }
 
 interface CampaignRecord {
@@ -33,7 +35,7 @@ interface CampaignRecord {
   communityName: string;
 }
 
-export default function MuseumOfTheJourney({ currentUser, activities, onShareConquest }: MuseumOfTheJourneyProps) {
+export default function MuseumOfTheJourney({ currentUser, activities, onShareConquest, firebaseAuth }: MuseumOfTheJourneyProps) {
   const currentUserId = currentUser?.id || "anonymous";
 
   // Persistent user-defined memory album
@@ -45,47 +47,75 @@ export default function MuseumOfTheJourney({ currentUser, activities, onShareCon
   const [isUploading, setIsUploading] = useState(false);
   const [errorUploading, setErrorUploading] = useState<string | null>(null);
 
+  const [reactionsReceived, setReactionsReceived] = useState<number>(0);
+
+  useEffect(() => {
+    const fetchReceivedReactions = async () => {
+      try {
+        const res = await fetch("/api/posts");
+        if (res.ok) {
+          const posts = await res.json();
+          let count = 0;
+          posts.forEach((p: any) => {
+            if (currentUser && (p.userId === currentUser.id || p.userName === currentUser.name || p.userName === currentUser.displayName)) {
+              if (p.reactions) {
+                Object.values(p.reactions).forEach((userList: any) => {
+                  if (Array.isArray(userList)) {
+                    count += userList.length;
+                  }
+                });
+              }
+            }
+          });
+          setReactionsReceived(count);
+        }
+      } catch (err) {
+        console.error("Error loading reactions count:", err);
+      }
+    };
+
+    if (currentUser) {
+      fetchReceivedReactions();
+    }
+  }, [currentUser]);
+
   // Search and general Filter States
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
   const [filterYear, setFilterYear] = useState<string>("all");
 
-  // Load and Save memories
+  // Load memories from Firestore instead of localStorage
   useEffect(() => {
-    const saved = localStorage.getItem(`museum_memories_${currentUserId}`);
-    if (saved) {
+    const fetchMemories = async () => {
       try {
-        setMemories(JSON.parse(saved));
+        const headers: Record<string, string> = {};
+        if (firebaseAuth?.currentUser) {
+          const idToken = await firebaseAuth.currentUser.getIdToken();
+          headers["Authorization"] = `Bearer ${idToken}`;
+        }
+        const res = await fetch(`/api/memories?userId=${currentUserId}`, {
+          headers
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setMemories(data);
+        } else {
+          // Fallback simple mock if offline
+          console.warn("Could not load memories from server, falling back.");
+          const savedLocal = localStorage.getItem(`museum_memories_${currentUserId}`);
+          if (savedLocal) {
+            setMemories(JSON.parse(savedLocal));
+          }
+        }
       } catch (err) {
         console.error("Error loading memories:", err);
       }
-    } else {
-      // Default/Starter beautiful memories matching the Soka/Buddhist theme
-      const defaults: MemoryItem[] = [
-        {
-          id: "m1",
-          url: "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?w=600",
-          caption: "Primeiro Daimoku matinal da vitória - Lar Soka",
-          date: "2026-01-05",
-          tag: "Daimoku"
-        },
-        {
-          id: "m2",
-          url: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?w=600",
-          caption: "Encontro Regional de Jovens - Bodhi Cooperação",
-          date: "2026-02-15",
-          tag: "Comunidade"
-        }
-      ];
-      setMemories(defaults);
-      localStorage.setItem(`museum_memories_${currentUserId}`, JSON.stringify(defaults));
-    }
-  }, [currentUserId]);
+    };
 
-  const saveMemoriesToStore = (newMemories: MemoryItem[]) => {
-    setMemories(newMemories);
-    localStorage.setItem(`museum_memories_${currentUserId}`, JSON.stringify(newMemories));
-  };
+    if (currentUserId) {
+      fetchMemories();
+    }
+  }, [currentUserId, firebaseAuth]);
 
   // Convert image to base64 for the server API route /api/upload
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -111,9 +141,16 @@ export default function MuseumOfTheJourney({ currentUser, activities, onShareCon
     setErrorUploading(null);
 
     try {
+      // 1. Upload base64 image (which writes locally + persistent_media)
+      const uploadHeaders: Record<string, string> = { "Content-Type": "application/json" };
+      if (firebaseAuth?.currentUser) {
+        const idToken = await firebaseAuth.currentUser.getIdToken();
+        uploadHeaders["Authorization"] = `Bearer ${idToken}`;
+      }
+
       const response = await fetch("/api/upload", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: uploadHeaders,
         body: JSON.stringify({ image: selectedBase64, name: selectedFile?.name || "memory.jpg" })
       });
 
@@ -121,24 +158,43 @@ export default function MuseumOfTheJourney({ currentUser, activities, onShareCon
         throw new Error("Falha no servidor ao processar imagem.");
       }
 
-      const data = await response.json();
-      const newMemory: MemoryItem = {
-        id: "mem-" + Math.random().toString(36).substr(2, 9),
-        url: data.url,
-        caption: newImageCaption.trim() || "Nova memória da jornada de revolução humana",
-        date: new Date().toISOString().split("T")[0],
-        tag: newImageTag
-      };
+      const uploadData = await response.json();
 
-      const updated = [newMemory, ...memories];
-      saveMemoriesToStore(updated);
+      // 2. Save the memory metadata as a structured document in Firestore memories collection
+      const saveResponse = await fetch("/api/memories", {
+        method: "POST",
+        headers: uploadHeaders,
+        body: JSON.stringify({
+          userId: currentUserId,
+          url: uploadData.url,
+          caption: newImageCaption.trim() || "Nova memória da jornada de revolução humana",
+          tag: newImageTag,
+          date: new Date().toISOString().split("T")[0]
+        })
+      });
+
+      if (!saveResponse.ok) {
+        throw new Error("Falha ao salvar metadados da memória no Firestore.");
+      }
+
+      const savedMemory = await saveResponse.json();
+
+      // Add to local state synchronously
+      setMemories(prev => [savedMemory, ...prev]);
+
+      // Simple backup to localstorage for robustness
+      try {
+        localStorage.setItem(`museum_memories_${currentUserId}`, JSON.stringify([savedMemory, ...memories]));
+      } catch (err) {
+        // storage quota
+      }
 
       // Clean inputs
       setNewImageCaption("");
       setNewImageTag("Geral");
       setSelectedFile(null);
       setSelectedBase64("");
-      alert("Memória gravada permanentemente no seu Museu da Jornada! 🏛✨");
+      alert("Memória gravada permanentemente no seu Museu da Jornada e no Firestore! 🏛✨");
     } catch (err: any) {
       setErrorUploading(err?.message || "Ocorreu um erro no upload.");
     } finally {
@@ -146,10 +202,32 @@ export default function MuseumOfTheJourney({ currentUser, activities, onShareCon
     }
   };
 
-  const handleDeleteMemory = (id: string) => {
-    if (confirm("Deseja realmente remover esta foto histórica do seu Museu?")) {
-      const updated = memories.filter(m => m.id !== id);
-      saveMemoriesToStore(updated);
+  const handleDeleteMemory = async (id: string) => {
+    if (confirm("Deseja realmente remover esta foto histórica do seu Museu de forma definitiva no Firestore?")) {
+      try {
+        const headers: Record<string, string> = {};
+        if (firebaseAuth?.currentUser) {
+          const idToken = await firebaseAuth.currentUser.getIdToken();
+          headers["Authorization"] = `Bearer ${idToken}`;
+        }
+
+        const res = await fetch(`/api/memories/${id}`, {
+          method: "DELETE",
+          headers
+        });
+
+        if (res.ok) {
+          const updated = memories.filter(m => m.id !== id);
+          setMemories(updated);
+          localStorage.setItem(`museum_memories_${currentUserId}`, JSON.stringify(updated));
+        } else {
+          const data = await res.json();
+          alert(data.error || "Não foi possível remover da nuvem.");
+        }
+      } catch (err: any) {
+        console.error("Deleting memory failed:", err);
+        alert("Erro de conexão ao remover memória.");
+      }
     }
   };
 
@@ -169,35 +247,46 @@ export default function MuseumOfTheJourney({ currentUser, activities, onShareCon
     .reduce((sum, a) => sum + (a.minutes || (a as any).duration || 0), 0);
 
   // Constants & campaigns stats
-  const totalCampaignsJoined = 1; // Default BSGI campaigns 
-  const totalChallengesJoined = (currentUser as any)?.challengesCompleted?.length || 2;
+  const getCompletedChallengesCount = () => {
+    let count = 0;
+    if (currentUser) {
+      if (currentUser.streak >= 30) count++;
+      if (currentUser.streak >= 15) count++;
+      if (currentUser.daimokuBalance && currentUser.daimokuBalance >= 1000) count++;
+      if (currentUser.streak >= 7) count++;
+    }
+    return count;
+  };
+
+  const totalCampaignsJoined = activities.length > 0 ? 1 : 0; // Real: 1 if they have registered activities, 0 otherwise
+  const totalChallengesJoined = getCompletedChallengesCount();
   const streakDays = currentUser?.streak || 0;
 
   // Personal Records logic
   const findMaxDaimokuInDay = () => {
     const days: Record<string, number> = {};
-    activities.filter(a => a.type === "daimoku").forEach(act => {
-      const day = act.timestamp.split("T")[0];
-      days[day] = (days[day] || 0) + (act.minutes || 0);
+    activities.filter(act => act.type === "daimoku").forEach(act => {
+       const day = act.timestamp.split("T")[0];
+       days[day] = (days[day] || 0) + (act.minutes || 0);
     });
     const values = Object.values(days);
     return values.length > 0 ? Math.max(...values) : 0;
   };
 
   const findMaxExercisesDetails = () => {
-    const exerciseMinutes = activities.filter(a => a.type === "exercise").map(a => a.minutes || (a as any).duration || 0);
+    const exerciseMinutes = activities.filter(act => act.type === "exercise").map(act => act.minutes || (act as any).duration || 0);
     return exerciseMinutes.length > 0 ? Math.max(...exerciseMinutes) : 0;
   };
 
   const findMaxWalkMinutes = () => {
-    const walks = activities.filter(a => a.type === "exercise" && (a.category === "Corrida" || a.subType?.toLowerCase().includes("caminhada") || a.category?.toLowerCase() === "caminhada"));
-    const mins = walks.map(a => a.minutes || (a as any).duration || 0);
+    const walks = activities.filter(act => act.type === "exercise" && (act.category === "Corrida" || act.subType?.toLowerCase().includes("caminhada") || act.category?.toLowerCase() === "caminhada"));
+    const mins = walks.map(act => act.minutes || (act as any).duration || 0);
     return mins.length > 0 ? Math.max(...mins) : 0;
   };
 
   const findMaxRunMinutes = () => {
-    const runs = activities.filter(a => a.type === "exercise" && (a.category === "Corrida" || a.subType?.toLowerCase().includes("corrida")));
-    const mins = runs.map(a => a.minutes || (a as any).duration || 0);
+    const runs = activities.filter(act => act.type === "exercise" && (act.category === "Corrida" || act.subType?.toLowerCase().includes("corrida")));
+    const mins = runs.map(act => act.minutes || (act as any).duration || 0);
     return mins.length > 0 ? Math.max(...mins) : 0;
   };
 
@@ -213,19 +302,42 @@ export default function MuseumOfTheJourney({ currentUser, activities, onShareCon
 
   const maxDaimokuSingleDay = findMaxDaimokuInDay();
   const maxWorkoutMinutes = findMaxExercisesDetails();
-  const maxWalkMinutes = findMaxWalkMinutes() || 40; // Default past record
-  const maxRunMinutes = findMaxRunMinutes() || 45; // Default past record
+  const maxWalkMinutes = findMaxWalkMinutes(); // Real walk record, no fake fallback
+  const maxRunMinutes = findMaxRunMinutes(); // Real run record, no fake fallback
   const maxSingleDayLogsCount = findMaxSingleDayLogs();
+
+  // Helpers for dynamic campaign and historical timeline validation based on actual user start date
+  const isCampaignLegitimate = (endDateStr: string) => {
+    const campaignEndDate = new Date(endDateStr);
+    const userJoinedDate = currentUser?.lastActive ? new Date(currentUser.lastActive) : new Date();
+    
+    let earliestDate = userJoinedDate;
+    if (activities.length > 0) {
+      const dates = activities.map(a => new Date(a.timestamp).getTime());
+      earliestDate = new Date(Math.min(...dates));
+    }
+    
+    // Legitimate only if the user started their journey on or before the campaign ended
+    return earliestDate.getTime() <= (campaignEndDate.getTime() + 24 * 60 * 60 * 1000);
+  };
 
   // First incidents timeline data
   const getTimelineEvents = () => {
     const events = [];
+    const userJoinedDate = currentUser?.lastActive ? new Date(currentUser.lastActive) : new Date();
+    
+    let earliestDate = userJoinedDate;
+    if (activities.length > 0) {
+      const dates = activities.map(a => new Date(a.timestamp).getTime());
+      earliestDate = new Date(Math.min(...dates));
+    }
+    const userStartDateStr = earliestDate.toISOString().split("T")[0];
 
     // Account creation date
     events.push({
       id: "ev1",
       title: "Primeiro Acesso ao BodhiShape",
-      date: (currentUser as any)?.createdAt ? (currentUser as any).createdAt.split("T")[0] : "2026-01-01",
+      date: (currentUser as any)?.createdAt ? (currentUser as any).createdAt.split("T")[0] : userStartDateStr,
       description: "Início oficial da jornada do guerreiro budista. Configuração do perfil e primeiro login no ecossistema.",
       emoji: "📱",
       category: "Acesso"
@@ -270,52 +382,56 @@ export default function MuseumOfTheJourney({ currentUser, activities, onShareCon
       });
     }
 
-    // First Community Joined (District etc)
+    // First Community Joined (District etc) - Dynamic date
     events.push({
       id: "ev-community",
       title: "Integração na Comunidade Territorial",
-      date: "2026-01-08",
+      date: userStartDateStr,
       description: `Ingresso na rede oficial de membros da BSGI. Vinculação na divisão ${currentUser?.division || "DS"} e Região ${currentUser?.region || "Geral"}.`,
       emoji: "🤝",
       category: "Comunidade"
     });
 
-    // First Challenge
-    events.push({
-      id: "ev-challenge",
-      title: "Primeiro Desafio Territorial Concluído",
-      date: "2026-02-10",
-      description: "Sucesso no desafio de 10 dias consecutivos de recitação e exercícios integrados.",
-      emoji: "🎯",
-      category: "Desafio"
-    });
+    // Check legitimacy of early past seed events dynamically
+    if (isCampaignLegitimate("2026-02-10")) {
+      events.push({
+        id: "ev-challenge",
+        title: "Primeiro Desafio Territorial Concluído",
+        date: "2026-02-10",
+        description: "Sucesso no desafio de 10 dias consecutivos de recitação e exercícios integrados.",
+        emoji: "🎯",
+        category: "Desafio"
+      });
+    }
 
-    // First Campaign
-    events.push({
-      id: "ev-campaign",
-      title: "Participação na Missão Nordeste 1",
-      date: "2026-03-01",
-      description: "Campanha coletiva imensa de doação de energia Daimoku e incentivo em prol do Nordeste.",
-      emoji: "🗺️",
-      category: "Campanha"
-    });
+    if (isCampaignLegitimate("2026-03-31")) {
+      events.push({
+        id: "ev-campaign",
+        title: "Participação na Missão Nordeste 1",
+        date: "2026-03-01",
+        description: "Campanha coletiva imensa de doação de energia Daimoku e incentivo em prol do Nordeste.",
+        emoji: "🗺️",
+        category: "Campanha"
+      });
+    }
 
-    // First Medal Awarded
-    events.push({
-      id: "ev-medal",
-      title: "Primeira Medalha de Conquista Soka",
-      date: "2026-01-20",
-      description: "Conquista do selo 'Daimoku Matinal Perfeito' após 7 dias seguidos perseverando cedo.",
-      emoji: "🏆",
-      category: "Conquista"
-    });
+    if (isCampaignLegitimate("2026-01-20")) {
+      events.push({
+        id: "ev-medal",
+        title: "Primeira Medalha de Conquista Soka",
+        date: "2026-01-20",
+        description: "Conquista do selo 'Daimoku Matinal Perfeito' após 7 dias seguidos perseverando cedo.",
+        emoji: "🏆",
+        category: "Conquista"
+      });
+    }
 
     return events.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   };
 
   const timelineEvents = getTimelineEvents();
 
-  // Participated campaigns records database
+  // Participated campaigns records database - Dynamically filtered to only show valid ones matching active timeframe
   const campaignRecords: CampaignRecord[] = [
     {
       id: "camp-ne1",
@@ -339,7 +455,10 @@ export default function MuseumOfTheJourney({ currentUser, activities, onShareCon
       activitiesCount: 72,
       communityName: "Distrito Sol Nascente - Sul"
     }
-  ];
+  ].filter(camp => {
+    const endStr = camp.id === "camp-ne1" ? "2026-03-31" : "2026-04-15";
+    return isCampaignLegitimate(endStr);
+  });
 
   // Achievements List
   const specialAchievements = [
@@ -514,7 +633,7 @@ export default function MuseumOfTheJourney({ currentUser, activities, onShareCon
           { label: "Campanhas Unidas 🗺️", val: totalCampaignsJoined },
           { label: "Desafios Vencidos 🎯", val: totalChallengesJoined },
           { label: "Fotos Memoráveis 🖼️", val: memories.length },
-          { label: "Reações Recebidas 👏", val: (currentUser as any)?.likesCount || 14 }
+          { label: "Reações Recebidas 👏", val: reactionsReceived }
         ].map((stat, i) => (
           <div key={i} className="bg-slate-900/50 p-3.5 rounded-xl border border-slate-850/70 shadow-sm flex flex-col justify-between">
             <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest leading-relaxed font-sans">{stat.label}</span>
@@ -531,27 +650,39 @@ export default function MuseumOfTheJourney({ currentUser, activities, onShareCon
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="bg-slate-950/65 p-3.5 rounded-lg border border-slate-900">
             <p className="text-[10px] font-bold text-slate-500 uppercase">MAIOR DAIMOKU NUM DIA</p>
-            <p className="text-base font-black font-mono text-amber-300 mt-1">{maxDaimokuSingleDay} minutos</p>
+            <p className="text-base font-black font-mono text-amber-300 mt-1">
+              {maxDaimokuSingleDay > 0 ? `${maxDaimokuSingleDay} minutos` : "Nenhum registro ainda"}
+            </p>
           </div>
           <div className="bg-slate-950/65 p-3.5 rounded-lg border border-slate-900">
             <p className="text-[10px] font-bold text-slate-500 uppercase">MAIOR SEQUÊNCIA ATIVA</p>
-            <p className="text-base font-black font-mono text-amber-300 mt-1">{streakDays} dias consecutivos</p>
+            <p className="text-base font-black font-mono text-amber-300 mt-1">
+              {streakDays > 0 ? `${streakDays} dias consecutivos` : "Nenhum registro ainda"}
+            </p>
           </div>
           <div className="bg-slate-950/65 p-3.5 rounded-lg border border-slate-900">
             <p className="text-[10px] font-bold text-slate-500 uppercase">MAIOR SESSÃO DE TREINO</p>
-            <p className="text-base font-black font-mono text-amber-300 mt-1">{maxWorkoutMinutes} minutos</p>
+            <p className="text-base font-black font-mono text-amber-300 mt-1">
+              {maxWorkoutMinutes > 0 ? `${maxWorkoutMinutes} minutos` : "Nenhum registro ainda"}
+            </p>
           </div>
           <div className="bg-slate-950/65 p-3.5 rounded-lg border border-slate-900">
             <p className="text-[10px] font-bold text-slate-500 uppercase">MAIOR CAMINHADA REVELADA</p>
-            <p className="text-base font-black font-mono text-amber-300 mt-1">{maxWalkMinutes} minutos</p>
+            <p className="text-base font-black font-mono text-amber-300 mt-1">
+              {maxWalkMinutes > 0 ? `${maxWalkMinutes} minutos` : "Nenhum registro ainda"}
+            </p>
           </div>
           <div className="bg-slate-950/65 p-3.5 rounded-lg border border-slate-900">
             <p className="text-[10px] font-bold text-slate-500 uppercase">MAIOR CORRIDA REGISTRADA</p>
-            <p className="text-base font-black font-mono text-amber-300 mt-1">{maxRunMinutes} minutos</p>
+            <p className="text-base font-black font-mono text-amber-300 mt-1">
+              {maxRunMinutes > 0 ? `${maxRunMinutes} minutos` : "Nenhum registro ainda"}
+            </p>
           </div>
           <div className="bg-slate-950/65 p-3.5 rounded-lg border border-slate-900">
             <p className="text-[10px] font-bold text-slate-500 uppercase">MAX REGISTROS EM 24H</p>
-            <p className="text-base font-black font-mono text-amber-300 mt-1">{maxSingleDayLogsCount} vezes</p>
+            <p className="text-base font-black font-mono text-amber-300 mt-1">
+              {maxSingleDayLogsCount > 0 ? `${maxSingleDayLogsCount} vezes` : "Nenhum registro ainda"}
+            </p>
           </div>
         </div>
       </div>
@@ -763,36 +894,50 @@ export default function MuseumOfTheJourney({ currentUser, activities, onShareCon
         </form>
 
         {/* Memory Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 pt-1">
-          {memories.map((m) => (
-            <div key={m.id} className="bg-slate-950 p-2.5 rounded-xl border border-slate-900 group relative">
-              <button
-                onClick={() => handleDeleteMemory(m.id)}
-                className="absolute top-4 right-4 bg-slate-950/80 border border-red-500/20 text-rose-400 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-rose-500 hover:text-white transition cursor-pointer"
-                title="Excluir foto"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
-              
-              <img 
-                src={m.url} 
-                alt={m.caption} 
-                className="w-full h-36 object-cover rounded-lg border border-slate-900" 
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?w=600";
-                }}
-              />
-              
-              <div className="pt-2">
-                <span className="bg-purple-500/25 text-[#D8B4FE] text-[8px] font-bold px-1.5 py-0.2 rounded font-mono uppercase">
-                  {m.tag}
-                </span>
-                <p className="text-[10px] text-slate-400 mt-1.5 leading-snug font-sans">{m.caption}</p>
-                <p className="text-[9px] font-mono text-slate-500 mt-1">{m.date}</p>
-              </div>
+        {memories.length === 0 ? (
+          <div className="bg-slate-950/40 p-10 rounded-xl border border-slate-900 border-dashed text-center space-y-3">
+            <div className="w-12 h-12 rounded-full bg-purple-500/5 border border-purple-500/20 flex items-center justify-center text-[#A78BFA] mx-auto">
+              <ImageIcon className="w-6 h-6 text-[#A78BFA]/60" />
             </div>
-          ))}
-        </div>
+            <div>
+              <p className="text-xs font-bold text-slate-200">Seu Álbum da Jornada está Vazio</p>
+              <p className="text-[11px] text-slate-500 leading-relaxed max-w-sm mx-auto mt-1">
+                Grave seus relatos de vitória na jornada Soka-Gymrats! Use a aba acima para selecionar uma foto marcante, escolher o marcador (Daimoku, Comunidade, Saúde, etc.) e registrar seu primeiro momento real.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 pt-1">
+            {memories.map((m) => (
+              <div key={m.id} className="bg-slate-950 p-2.5 rounded-xl border border-slate-900 group relative">
+                <button
+                  onClick={() => handleDeleteMemory(m.id)}
+                  className="absolute top-4 right-4 bg-slate-950/80 border border-red-500/20 text-rose-400 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-rose-500 hover:text-white transition cursor-pointer"
+                  title="Excluir foto"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+                
+                <img 
+                  src={m.url} 
+                  alt={m.caption} 
+                  className="w-full h-36 object-cover rounded-lg border border-slate-900" 
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?w=600";
+                  }}
+                />
+                
+                <div className="pt-2">
+                  <span className="bg-purple-500/25 text-[#D8B4FE] text-[8px] font-bold px-1.5 py-0.2 rounded font-mono uppercase">
+                    {m.tag}
+                  </span>
+                  <p className="text-[10px] text-slate-400 mt-1.5 leading-snug font-sans">{m.caption}</p>
+                  <p className="text-[9px] font-mono text-slate-500 mt-1">{m.date}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 3. CAMPANHAS PARTICIPADAS */}

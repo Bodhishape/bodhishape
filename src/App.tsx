@@ -37,6 +37,8 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 
 import { User, Activity, Post, Goal, Community, KofuRecord, BsRecord, TrialInfo } from "./types";
+import { initializeApp } from "firebase/app";
+import { getAuth, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, onAuthStateChanged, signOut, setPersistence, browserLocalPersistence } from "firebase/auth";
 import SocialFeed from "./components/SocialFeed";
 import ActivityLogger from "./components/ActivityLogger";
 import Leaderboards from "./components/Leaderboards";
@@ -176,6 +178,7 @@ export default function App() {
     const duration = Number(localStorage.getItem("daimoku_timer_duration") || "15");
     const audio = (localStorage.getItem("daimoku_timer_audio") || "none") as "none" | "lento" | "vibrante" | "sensei";
     const target = Number(localStorage.getItem("daimoku_timer_target_timestamp") || "0");
+    const savedSeconds = localStorage.getItem("daimoku_timer_seconds_remaining");
     
     setDaimokuTimerDuration(duration);
     setDaimokuTimerAudioType(audio);
@@ -191,63 +194,23 @@ export default function App() {
         setDaimokuTimerIsRunning(false);
       }
     } else {
-      setDaimokuTimerSecondsRemaining(duration * 60);
+      if (savedSeconds !== null && savedSeconds !== undefined) {
+        setDaimokuTimerSecondsRemaining(Number(savedSeconds));
+      } else {
+        setDaimokuTimerSecondsRemaining(duration * 60);
+      }
       setDaimokuTimerIsRunning(false);
     }
   }, []);
 
-  // Native high-fidelity speech synthesis loop for Daimoku chanting
+  // Save remaining seconds to LocalStorage whenever it changes
   useEffect(() => {
-    let isSynthRunning = true;
-    let fallbackTimeout: any = null;
+    localStorage.setItem("daimoku_timer_seconds_remaining", daimokuTimerSecondsRemaining.toString());
+  }, [daimokuTimerSecondsRemaining]);
 
-    if (daimokuTimerIsRunning && daimokuTimerAudioType !== "none") {
-      const playChant = () => {
-        if (!isSynthRunning) return;
-        window.speechSynthesis.cancel();
-
-        const utterance = new SpeechSynthesisUtterance("Nam Myoho Renge Kyo");
-        utterance.lang = "ja-JP"; // Perfect authentic Japanese phonetics
-        utterance.volume = daimokuVolume / 100;
-
-        if (daimokuTimerAudioType === "lento") {
-          utterance.rate = 0.75;
-          utterance.pitch = 0.85;
-        } else if (daimokuTimerAudioType === "vibrante") {
-          utterance.rate = 1.35;
-          utterance.pitch = 1.15;
-        } else if (daimokuTimerAudioType === "sensei") {
-          utterance.rate = 0.95;
-          utterance.pitch = 0.90;
-        }
-
-        utterance.onend = () => {
-          if (isSynthRunning) {
-            const delay = daimokuTimerAudioType === "lento" ? 850 : (daimokuTimerAudioType === "vibrante" ? 220 : 450);
-            fallbackTimeout = setTimeout(playChant, delay);
-          }
-        };
-
-        utterance.onerror = () => {
-          if (isSynthRunning) {
-            fallbackTimeout = setTimeout(playChant, 1000);
-          }
-        };
-
-        window.speechSynthesis.speak(utterance);
-      };
-
-      // Start looping
-      playChant();
-    } else {
-      window.speechSynthesis.cancel();
-    }
-
-    return () => {
-      isSynthRunning = false;
-      if (fallbackTimeout) clearTimeout(fallbackTimeout);
-      window.speechSynthesis.cancel();
-    };
+  // Voice synthesis disabled until actual audio files arrive (Requisite 1.4)
+  useEffect(() => {
+    // Left empty prepared for real audio files
   }, [daimokuTimerIsRunning, daimokuTimerAudioType, daimokuVolume]);
 
   // Sync countdown tick and capture session endings
@@ -287,9 +250,14 @@ export default function App() {
     
     const reportStart = async () => {
       try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (firebaseAuth?.currentUser) {
+          const token = await firebaseAuth.currentUser.getIdToken();
+          headers["Authorization"] = `Bearer ${token}`;
+        }
         await fetch("/api/daimoku/start", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({ userId: currentUser.id, name: currentUser.displayName || currentUser.name })
         });
       } catch (err) {
@@ -299,9 +267,14 @@ export default function App() {
     
     const reportHeartbeat = async () => {
       try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (firebaseAuth?.currentUser) {
+          const token = await firebaseAuth.currentUser.getIdToken();
+          headers["Authorization"] = `Bearer ${token}`;
+        }
         await fetch("/api/daimoku/heartbeat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({ userId: currentUser.id, name: currentUser.displayName || currentUser.name })
         });
       } catch (err) {
@@ -311,9 +284,14 @@ export default function App() {
     
     const reportStop = async () => {
       try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (firebaseAuth?.currentUser) {
+          const token = await firebaseAuth.currentUser.getIdToken();
+          headers["Authorization"] = `Bearer ${token}`;
+        }
         await fetch("/api/daimoku/stop", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({ userId: currentUser.id })
         });
       } catch (err) {
@@ -416,6 +394,7 @@ export default function App() {
   const [registerRegion, setRegisterRegion] = useState("");
   const [registerSub, setRegisterSub] = useState("");
   const [registerAvatarUrl, setRegisterAvatarUrl] = useState("");
+  const [registerBirthDate, setRegisterBirthDate] = useState("");
   
   // Custom SGI Soka horizontal groups registration states
   const [registerHorizontalGroup, setRegisterHorizontalGroup] = useState("");
@@ -433,9 +412,276 @@ export default function App() {
   const [registerBlock, setRegisterBlock] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [showDemoUsers, setShowDemoUsers] = useState(false);
+  const [interceptedEmails, setInterceptedEmails] = useState<any[]>([]);
+  const [expandedEmailId, setExpandedEmailId] = useState<string | null>(null);
+  
+  const [firebaseApp, setFirebaseApp] = useState<any>(null);
+  const [firebaseAuth, setFirebaseAuth] = useState<any>(null);
+  const [signInEmailSent, setSignInEmailSent] = useState<boolean>(false);
+  const [sentEmailAddress, setSentEmailAddress] = useState<string>("");
+
+  // Initialize Firebase Client and handle incoming link completion
+  useEffect(() => {
+    const loadFirebaseConfigAndVerify = async () => {
+      try {
+        const response = await fetch("/api/firebase-config");
+        if (!response.ok) {
+          console.warn("Could not load Firebase configuration. Defaulting to local preview.");
+          return;
+        }
+        const config = await response.json();
+        const appInstance = initializeApp(config);
+        const authInstance = getAuth(appInstance);
+        try {
+          await setPersistence(authInstance, browserLocalPersistence);
+        } catch (persErr) {
+          console.warn("[FIREBASE_CLIENT] setPersistence error:", persErr);
+        }
+        setFirebaseApp(appInstance);
+        setFirebaseAuth(authInstance);
+
+        // Detect if loaded as Email sign-in link
+        if (isSignInWithEmailLink(authInstance, window.location.href)) {
+          let email = window.localStorage.getItem("emailForSignIn") || "";
+          if (!email) {
+            email = window.prompt("Por favor, confirme seu endereço de e-mail para completar o login:") || "";
+          }
+          
+          if (email) {
+            setLoading(true);
+            try {
+              const result = await signInWithEmailLink(authInstance, email, window.location.href);
+              window.localStorage.removeItem("emailForSignIn");
+              const idToken = await result.user.getIdToken();
+              console.log("[FIREBASE_AUTH] Successfully verified Email Link for UID:", result.user.uid);
+
+              // Match registered profile
+              const checkRes = await fetch(`/api/users?userId=${result.user.uid}`, {
+                headers: { "Authorization": `Bearer ${idToken}` }
+              });
+              const usersList = await checkRes.json();
+              const matchedUser = usersList.find((u: any) => u.id === result.user.uid);
+
+              if (matchedUser) {
+                localStorage.setItem("bodhishape_user_id", matchedUser.id);
+                setCurrentUser(matchedUser);
+                setLoggerSuccessMsg("Acesso via link do e-mail realizado com sucesso! 🪷");
+              } else {
+                // Not registered yet! Check localstorage for pending registration data
+                const pendingDetailsStr = window.localStorage.getItem("pendingRegistrationDetails");
+                if (pendingDetailsStr) {
+                  const pendingDetails = JSON.parse(pendingDetailsStr);
+                  const regRes = await fetch("/api/auth/register", {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      "Authorization": `Bearer ${idToken}`
+                    },
+                    body: JSON.stringify({
+                      ...pendingDetails,
+                      id: result.user.uid
+                    })
+                  });
+                  const regData = await regRes.json();
+                  if (regRes.ok) {
+                    window.localStorage.removeItem("pendingRegistrationDetails");
+                    localStorage.setItem("bodhishape_user_id", regData.id);
+                    setCurrentUser(regData);
+                    setLoggerSuccessMsg("Cadastro e acesso via link realizados com sucesso! ✨");
+                  } else {
+                    setAuthError(regData.error || "Erro registrar novo bodhishaper.");
+                  }
+                } else {
+                  // Provision minimal baseline user profile
+                  const regRes = await fetch("/api/auth/register", {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      "Authorization": `Bearer ${idToken}`
+                    },
+                    body: JSON.stringify({
+                      email: email.toLowerCase(),
+                      name: email.split("@")[0],
+                      displayName: email.split("@")[0],
+                      id: result.user.uid
+                    })
+                  });
+                  const regData = await regRes.json();
+                  if (regRes.ok) {
+                    localStorage.setItem("bodhishape_user_id", regData.id);
+                    setCurrentUser(regData);
+                    setLoggerSuccessMsg("Cadastro básico provisório ativado! Complete-o nas Configurações. 🪷");
+                  } else {
+                    setAuthError(regData.error || "Erro ao registrar perfil básico provisório.");
+                  }
+                }
+              }
+            } catch (err: any) {
+              console.error("[FIREBASE_AUTH] Link login execution aborted:", err);
+              setAuthError(`Esse link expirou ou já foi utilizado: ${err.message}`);
+            } finally {
+              setLoading(false);
+            }
+          }
+        }
+
+        // Active State Synchronizer
+        onAuthStateChanged(authInstance, async (user) => {
+          if (user) {
+            const idToken = await user.getIdToken();
+            const savedUserId = localStorage.getItem("bodhishape_user_id");
+            if (!currentUser || !savedUserId || savedUserId !== user.uid) {
+              const res = await fetch(`/api/users?userId=${user.uid}`, {
+                headers: { "Authorization": `Bearer ${idToken}` }
+              });
+              if (res.ok) {
+                const usersList = await res.json();
+                const matchedUser = usersList.find((u: any) => u.id === user.uid);
+                if (matchedUser) {
+                  localStorage.setItem("bodhishape_user_id", matchedUser.id);
+                  setCurrentUser(matchedUser);
+                }
+              }
+            }
+          }
+        });
+
+      } catch (err) {
+        console.warn("[FIREBASE_CLIENT] Config initialization issue:", err);
+      }
+    };
+    loadFirebaseConfigAndVerify();
+  }, []);
+
+  // Poll intercepted emails for visual previews on the login screen
+  useEffect(() => {
+    if (currentUser) return;
+    if (!firebaseAuth?.currentUser) return;
+
+    const fetchEmails = async () => {
+      try {
+        const idToken = await firebaseAuth.currentUser.getIdToken();
+        const res = await fetch("/api/debug/intercepted-emails", {
+          headers: {
+            "Authorization": `Bearer ${idToken}`
+          }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setInterceptedEmails(data);
+        }
+      } catch (err) {
+        console.warn("Could not fetch intercepted emails:", err);
+      }
+    };
+
+    fetchEmails();
+    const interval = setInterval(fetchEmails, 3500);
+    return () => clearInterval(interval);
+  }, [currentUser, firebaseAuth?.currentUser]);
+
+  // Globally synchronize and apply visual preferences: themes, font sizes, and high contrast onto the HTML elements
+  useEffect(() => {
+    const htmlEl = document.documentElement;
+    
+    // 1. Theme Selection
+    const activeTheme = currentUser?.theme || localStorage.getItem("bodhishape_theme") || "escuro";
+    htmlEl.classList.remove("theme-claro", "theme-escuro", "theme-personalizado");
+    if (activeTheme === "auto") {
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      htmlEl.classList.add(prefersDark ? "theme-escuro" : "theme-claro");
+    } else {
+      htmlEl.classList.add(`theme-${activeTheme}`);
+    }
+    
+    // 2. Font Size Scale selection
+    const fontSize = currentUser?.accessibility?.fontSize || "medium";
+    htmlEl.classList.remove(
+      "accessibility-text-small",
+      "accessibility-text-medium",
+      "accessibility-text-large",
+      "accessibility-text-extra-large"
+    );
+    htmlEl.classList.add(`accessibility-text-${fontSize}`);
+    
+    // 3. High Contrast setting
+    const isHighContrast = currentUser?.accessibility?.highContrast || false;
+    if (isHighContrast) {
+      htmlEl.classList.add("accessibility-high-contrast");
+    } else {
+      htmlEl.classList.remove("accessibility-high-contrast");
+    }
+  }, [currentUser]);
+
+  // Globally intercept window.fetch to automatically include verified ID tokens in request headers on all API endpoints
+  useEffect(() => {
+    if (!firebaseAuth) return;
+    const originalFetch = window.fetch.bind(window);
+    
+    const interceptedFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const urlString = input.toString();
+      if (urlString.startsWith("/api/")) {
+        const headers = { ...init?.headers } as Record<string, string>;
+        if (firebaseAuth.currentUser) {
+          try {
+            const token = await firebaseAuth.currentUser.getIdToken();
+            headers["Authorization"] = `Bearer ${token}`;
+          } catch (tErr) {
+            console.warn("[FETCH_INTERCEPT] Token acquisition skipped:", tErr);
+          }
+        }
+        
+        const savedUserId = localStorage.getItem("bodhishape_user_id");
+        if (savedUserId && !headers["x-user-id"]) {
+          headers["x-user-id"] = savedUserId;
+        }
+
+        return originalFetch(input, {
+          ...init,
+          headers
+        });
+      }
+      return originalFetch(input, init);
+    };
+
+    try {
+      Object.defineProperty(window, "fetch", {
+        value: interceptedFetch,
+        configurable: true,
+        writable: true,
+      });
+    } catch (e) {
+      console.warn("[FETCH_INTERCEPT] Failed to intercept fetch via Object.defineProperty:", e);
+      // Fallback: Try defining on globalThis
+      try {
+        (globalThis as any).fetch = interceptedFetch;
+      } catch (err) {
+        console.warn("[FETCH_INTERCEPT] All global fetch intercept approaches failed:", err);
+      }
+    }
+
+    return () => {
+      try {
+        Object.defineProperty(window, "fetch", {
+          value: originalFetch,
+          configurable: true,
+          writable: true,
+        });
+      } catch (e) {
+        console.warn("[FETCH_INTERCEPT] Failed to restore fetch:", e);
+      }
+    };
+  }, [firebaseAuth]);
 
   // Menu Drawer logout logic
-  const handleMenuLogout = () => {
+  const handleMenuLogout = async () => {
+    try {
+      if (firebaseAuth) {
+        await signOut(firebaseAuth);
+      }
+    } catch (err) {
+      console.warn("[AUTH_LOGOUT] Firebase signOut failed:", err);
+    }
     localStorage.removeItem("bodhishape_user_id");
     setCurrentUser(null);
     setIsMenuOpen(false);
@@ -449,76 +695,104 @@ export default function App() {
       return;
     }
     setAuthError(null);
+    setLoading(true);
 
+    const email = accessEmail.trim().toLowerCase();
+
+    // Verify if registered in local DB first to prevent wrong dispatches
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: accessEmail.trim().toLowerCase(),
-        })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        localStorage.setItem("bodhishape_user_id", data.id);
-        setCurrentUser(data);
-        setAccessEmail("");
-        setLoggerSuccessMsg("Bem-vindo(a) de volta ao BodhiShape! 🪷");
-      } else {
-        setAuthError(data.error || "Ocorreu um erro ao acessar a conta.");
+      const checkRes = await fetch(`/api/users?email=${email}`);
+      if (checkRes.ok) {
+        const usersList = await checkRes.json();
+        const matchedUser = usersList.find((u: any) => u.email && u.email.toLowerCase() === email);
+        if (!matchedUser) {
+          setAuthError("Este e-mail não possui cadastro no BodhiShape. Por favor, utilize a aba de Novos Bodhishapers para se cadastrar.");
+          setLoading(false);
+          return;
+        }
       }
-    } catch (err) {
-      console.error(err);
-      // Fallback offline/simulation login
-      const match = users.find(u => 
-        u.email.toLowerCase() === accessEmail.trim().toLowerCase() ||
-        (accessEmail.trim().toLowerCase() === "nara.gabriela@gmail.com" && u.id === "user-sdvtv37y6") ||
-        (accessEmail.trim().toLowerCase() === "silvalopesnara24@gmail.com" && u.id === "user-sdvtv37y6")
-      );
+    } catch (checkErr) {
+      console.warn("Precheck of email existence failed, proceeding anyway:", checkErr);
+    }
+
+    if (!firebaseAuth) {
+      // Fallback offline preview login
+      const match = users.find(u => u.email.toLowerCase() === email);
       if (match) {
         localStorage.setItem("bodhishape_user_id", match.id);
         setCurrentUser(match);
         setAccessEmail("");
         setLoggerSuccessMsg("Bem-vindo(a) de volta! (Acesso offline)");
+        setLoading(false);
       } else {
-        setAuthError("Este e-mail não possui cadastro no BodhiShape. Por favor, utilize a aba de Novos Bodhishapers para se cadastrar.");
+        setAuthError("Modo offline ativo e este e-mail não foi encontrado localmente.");
+        setLoading(false);
       }
+      return;
+    }
+
+    try {
+      const actionCodeSettings = {
+        url: window.location.origin,
+        handleCodeInApp: true,
+      };
+      await sendSignInLinkToEmail(firebaseAuth, email, actionCodeSettings);
+      window.localStorage.setItem("emailForSignIn", email);
+      
+      setSentEmailAddress(email);
+      setSignInEmailSent(true);
+      setAccessEmail("");
+      setLoggerSuccessMsg("Link de login enviado com sucesso! Verifique sua caixa de entrada. 🪷");
+    } catch (err: any) {
+      console.error("[LOGIN_LINK_ERROR]", err);
+      setAuthError(`Falha ao enviar link de login: ${err.message || err}`);
+    } finally {
+      setLoading(false);
     }
   };
 
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
-  const handleRegisterAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleRegisterAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
       setIsUploadingAvatar(true);
       const reader = new FileReader();
-      reader.onloadend = async () => {
-        try {
-          const res = await fetch("/api/upload", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              image: reader.result,
-              name: file.name
-            })
-          });
-          const data = await res.json();
-          if (res.ok && data.url) {
-            setRegisterAvatarUrl(data.url);
-          } else {
-            setAuthError(data.error || "Falha ao processar imagem no servidor.");
+      reader.onloadend = () => {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const canvas = document.createElement("canvas");
+            const targetSize = 180;
+            canvas.width = targetSize;
+            canvas.height = targetSize;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              // Recorta e centraliza a imagem para quadrado perfeito
+              const minDim = Math.min(img.width, img.height);
+              const sx = (img.width - minDim) / 2;
+              const sy = (img.height - minDim) / 2;
+              ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, targetSize, targetSize);
+            }
+            const compressedBase64 = canvas.toDataURL("image/jpeg", 0.75);
+            setRegisterAvatarUrl(compressedBase64);
+          } catch (err) {
+            console.error("Erro ao comprimir imagem:", err);
+            setAuthError("Erro ao processar imagem para o formato correto.");
+          } finally {
+            setIsUploadingAvatar(false);
           }
-        } catch (err) {
-          console.error(err);
-          setAuthError("Erro de comunicação ao carregar foto.");
-        } finally {
+        };
+        img.onerror = () => {
+          setAuthError("Falha ao abrir arquivo de imagem selecionado.");
           setIsUploadingAvatar(false);
-        }
+        };
+        img.src = reader.result as string;
       };
       reader.readAsDataURL(file);
     } catch (err) {
       console.error(err);
+      setAuthError("Erro ao carregar foto selecionada.");
       setIsUploadingAvatar(false);
     }
   };
@@ -534,46 +808,27 @@ export default function App() {
       return;
     }
     setAuthError(null);
+    setLoading(true);
 
+    const email = registerEmail.trim().toLowerCase();
+
+    // Verify if already registered in local DB
     try {
-      const res = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: registerEmail.trim().toLowerCase(),
-          name: registerName.trim(),
-          displayName: registerDisplayName.trim(),
-          avatar: registerAvatarUrl.trim() || undefined,
-          division: registerDivision,
-          region: registerRegion.trim(),
-          subDistrict: registerSub.trim(),
-          district: registerDistrict.trim(),
-          community: registerCity.trim(),
-          block: registerBlock.trim(),
-          horizontalGroup: registerHorizontalGroup.trim(),
-        })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        localStorage.setItem("bodhishape_user_id", data.id);
-        setCurrentUser(data);
-        // Clear forms
-        setRegisterEmail("");
-        setRegisterName("");
-        setRegisterDisplayName("");
-        setRegisterAvatarUrl("");
-        setRegisterRegion("");
-        setRegisterSub("");
-        setRegisterDistrict("");
-        setRegisterCity("");
-        setRegisterBlock("");
-        setRegisterHorizontalGroup("");
-        setLoggerSuccessMsg("Conta criada com sucesso! Seja muito bem-vindo(a) ao BodhiShape! ✨");
-      } else {
-        setAuthError(data.error || "Erro ao criar conta.");
+      const checkRes = await fetch(`/api/users?email=${email}`);
+      if (checkRes.ok) {
+        const usersList = await checkRes.json();
+        const matchedUser = usersList.find((u: any) => u.email && u.email.toLowerCase() === email);
+        if (matchedUser) {
+          setAuthError("Este e-mail já possui cadastro. Por favor, utilize a aba Acessar Conta para entrar.");
+          setLoading(false);
+          return;
+        }
       }
-    } catch (err) {
-      console.error(err);
+    } catch (checkErr) {
+      console.warn("Precheck of email existence failed, proceeding anyway:", checkErr);
+    }
+
+    if (!firebaseAuth) {
       // Simulate creation offline
       const simulatedId = "user-sim-" + Math.random().toString(36).substring(2, 9);
       const simulatedUser = {
@@ -593,10 +848,12 @@ export default function App() {
         streak: 1,
         daimokuBalance: 0,
         horizontalGroup: registerHorizontalGroup.trim(),
+        birthdate: registerBirthDate,
         lastActive: new Date().toISOString()
       };
       localStorage.setItem("bodhishape_user_id", simulatedId);
       setCurrentUser(simulatedUser);
+      
       setRegisterEmail("");
       setRegisterName("");
       setRegisterDisplayName("");
@@ -607,7 +864,67 @@ export default function App() {
       setRegisterCity("");
       setRegisterBlock("");
       setRegisterHorizontalGroup("");
+      setRegisterBirthDate("");
       setLoggerSuccessMsg("Conta criada offline com sucesso! ✨");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const pendingDetails = {
+        email,
+        name: registerName.trim(),
+        displayName: registerDisplayName.trim(),
+        avatar: registerAvatarUrl.trim() || undefined,
+        division: registerDivision,
+        region: registerRegion.trim(),
+        subDistrict: registerSub.trim(),
+        district: registerDistrict.trim(),
+        community: registerCity.trim(),
+        block: registerBlock.trim(),
+        horizontalGroup: registerHorizontalGroup.trim(),
+        birthdate: registerBirthDate
+      };
+      window.localStorage.setItem("pendingRegistrationDetails", JSON.stringify(pendingDetails));
+      window.localStorage.setItem("emailForSignIn", email);
+
+      // Envia os dados para estágio no servidor para assegurar persistência multiplataforma/multi-aba
+      try {
+        await fetch("/api/auth/stage-registration", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(pendingDetails)
+        });
+      } catch (stageErr) {
+        console.warn("[STAGE_REGISTRATION_FAILED] Server staging error:", stageErr);
+      }
+
+      const actionCodeSettings = {
+        url: window.location.origin,
+        handleCodeInApp: true,
+      };
+      await sendSignInLinkToEmail(firebaseAuth, email, actionCodeSettings);
+
+      setSentEmailAddress(email);
+      setSignInEmailSent(true);
+      
+      setRegisterEmail("");
+      setRegisterName("");
+      setRegisterDisplayName("");
+      setRegisterAvatarUrl("");
+      setRegisterRegion("");
+      setRegisterSub("");
+      setRegisterDistrict("");
+      setRegisterCity("");
+      setRegisterBlock("");
+      setRegisterHorizontalGroup("");
+      
+      setLoggerSuccessMsg("Link de ativação enviado por e-mail! Complete sua adesão clicando nele. ✨");
+    } catch (err: any) {
+      console.error("[REGISTER_LINK_ERROR]", err);
+      setAuthError(`Falha ao enviar e-mail de confirmação: ${err.message || err}`);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -657,24 +974,33 @@ export default function App() {
   const fetchAllData = async (userIdOverride?: string) => {
     try {
       setLoading(true);
+      const authHeaders = await getAuthHeaders();
       // Fetch users
       const targetUid = userIdOverride || currentUser?.id;
-      const usersRes = await fetch("/api/users" + (targetUid ? `?userId=${targetUid}` : ""));
+      const usersRes = await fetch("/api/users" + (targetUid ? `?userId=${targetUid}` : ""), {
+        headers: authHeaders
+      });
       const usersData = await usersRes.json();
       setUsers(usersData);
 
       // Fetch posts
-      const postsRes = await fetch("/api/posts");
+      const postsRes = await fetch("/api/posts", {
+        headers: authHeaders
+      });
       const postsData = await postsRes.json();
       setPosts(postsData);
 
       // Fetch communities
-      const commRes = await fetch("/api/communities");
+      const commRes = await fetch("/api/communities", {
+        headers: authHeaders
+      });
       const commData = await commRes.json();
       setCommunities(commData);
 
       // Fetch trial countdown info
-      const trialRes = await fetch("/api/trial-status");
+      const trialRes = await fetch("/api/trial-status", {
+        headers: authHeaders
+      });
       const trialData = await trialRes.json();
       setTrialStatus(trialData);
 
@@ -684,7 +1010,9 @@ export default function App() {
       if (targetUserId) {
         const matchedUser = usersData.find((u: any) => u.id === targetUserId);
         if (matchedUser) {
-          const dashRes = await fetch(`/api/dashboard-stats/${targetUserId}`);
+          const dashRes = await fetch(`/api/dashboard-stats/${targetUserId}`, {
+            headers: authHeaders
+          });
           const dashData = await dashRes.json();
           
           // Update buffers
@@ -848,6 +1176,22 @@ export default function App() {
     }
   };
 
+  const getAuthHeaders = async (additionalHeaders: Record<string, string> = {}) => {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...additionalHeaders
+    };
+    if (firebaseAuth?.currentUser) {
+      try {
+        const token = await firebaseAuth.currentUser.getIdToken();
+        headers["Authorization"] = `Bearer ${token}`;
+      } catch (err) {
+        console.warn("Failed to retrieve idToken", err);
+      }
+    }
+    return headers;
+  };
+
   // Log active item
   const handleLogActivity = async (payload: {
     type: "gongyo_morning" | "gongyo_evening" | "daimoku" | "exercise";
@@ -855,12 +1199,15 @@ export default function App() {
     exerciseCategory?: any;
     exerciseType?: string;
     notes?: string;
+    startTimestamp?: string;
+    endTimestamp?: string;
   }) => {
     if (!currentUser) return;
     try {
+      const authHeaders = await getAuthHeaders();
       const res = await fetch("/api/activities/log", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({ userId: currentUser.id, ...payload })
       });
       const data = await res.json();
@@ -888,9 +1235,10 @@ export default function App() {
   const handleComment = async (postId: string, content: string) => {
     if (!currentUser) return;
     try {
+      const authHeaders = await getAuthHeaders();
       const res = await fetch(`/api/posts/${postId}/comment`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({ userId: currentUser.id, content })
       });
       if (res.ok) fetchAllData();
@@ -903,9 +1251,10 @@ export default function App() {
   const handleReact = async (postId: string, reaction: string) => {
     if (!currentUser) return;
     try {
+      const authHeaders = await getAuthHeaders();
       const res = await fetch(`/api/posts/${postId}/react`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({ userId: currentUser.id, reaction })
       });
       if (res.ok) fetchAllData();
@@ -918,9 +1267,10 @@ export default function App() {
   const handleNewPost = async (content: string, image: string) => {
     if (!currentUser) return;
     try {
+      const authHeaders = await getAuthHeaders();
       const res = await fetch("/api/posts", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({ userId: currentUser.id, content, image })
       });
       if (res.ok) fetchAllData();
@@ -933,9 +1283,10 @@ export default function App() {
   const handleNewCombinedPost = async (payload: any) => {
     if (!currentUser) return { success: false, error: "Usuário não conectado." };
     try {
+      const authHeaders = await getAuthHeaders();
       const res = await fetch("/api/activities/log-combined", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({ ...payload, userId: currentUser.id })
       });
       const data = await res.json();
@@ -955,9 +1306,10 @@ export default function App() {
   const handleAddGoal = async (title: string, description: string, deadline: string) => {
     if (!currentUser) return;
     try {
+      const authHeaders = await getAuthHeaders();
       const res = await fetch("/api/goals", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({ userId: currentUser.id, title, description, deadline })
       });
       if (res.ok) fetchAllData();
@@ -969,9 +1321,10 @@ export default function App() {
   // Update Goal progress slider
   const handleUpdateGoalProgress = async (goalId: string, progress: number) => {
     try {
+      const authHeaders = await getAuthHeaders();
       const res = await fetch(`/api/goals/${goalId}/progress`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({ progress })
       });
       if (res.ok) fetchAllData();
@@ -983,8 +1336,10 @@ export default function App() {
   // Delete Goal
   const handleDeleteGoal = async (goalId: string) => {
     try {
+      const authHeaders = await getAuthHeaders();
       const res = await fetch(`/api/goals/${goalId}`, {
-        method: "DELETE"
+        method: "DELETE",
+        headers: authHeaders
       });
       if (res.ok) fetchAllData();
     } catch (err) {
@@ -996,9 +1351,10 @@ export default function App() {
   const handleAddCommunity = async (payload: any) => {
     if (!currentUser) return;
     try {
+      const authHeaders = await getAuthHeaders();
       const res = await fetch("/api/communities", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({ userId: currentUser.id, ...payload })
       });
       if (res.ok) fetchAllData();
@@ -1011,9 +1367,10 @@ export default function App() {
   const handleUpdateKofuStatus = async (status: "realizado" | "em_andamento" | "nao_realizado") => {
     if (!currentUser) return;
     try {
+      const authHeaders = await getAuthHeaders();
       const res = await fetch("/api/kofu", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({ userId: currentUser.id, campaignId: "campanha_3_2026", status })
       });
       if (res.ok) fetchAllData();
@@ -1026,9 +1383,10 @@ export default function App() {
   const handleUpdateBsStatus = async (status: string, renewalDate?: string) => {
     if (!currentUser) return;
     try {
+      const authHeaders = await getAuthHeaders();
       const res = await fetch("/api/bs", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({ userId: currentUser.id, status, renewalDate })
       });
       if (res.ok) fetchAllData();
@@ -1300,7 +1658,34 @@ export default function App() {
           {/* Form container - Glassmorphism Premium Card with Glowing Outline */}
           <div className="bg-[#0b0521]/60 border border-fuchsia-500/35 rounded-[32px] p-5 sm:p-7 shadow-[0_0_40px_rgba(217,70,239,0.15)] backdrop-blur-xl space-y-5">
             
-            {/* Tabs Selector Navigation */}
+            {signInEmailSent ? (
+              <div className="text-center py-6 space-y-4">
+                <div className="w-16 h-16 bg-fuchsia-500/10 border border-fuchsia-500/30 rounded-full flex items-center justify-center mx-auto animate-pulse">
+                  <span className="text-2xl">📬</span>
+                </div>
+                <div className="space-y-1.5">
+                  <h3 className="text-base font-black text-slate-100 uppercase tracking-wide">E-mail de Acesso Enviado!</h3>
+                  <p className="text-xs text-slate-300 max-w-sm mx-auto leading-relaxed">
+                    Enviamos um link mágico de login para <span className="text-[#d946ef] font-bold">{sentEmailAddress}</span>.
+                  </p>
+                  <p className="text-[10px] text-slate-400 max-w-xs mx-auto leading-normal">
+                    Clique no link recebido na sua caixa de entrada para acessar o BodhiShape imediatamente sem precisar digitar nenhuma senha.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSignInEmailSent(false);
+                    setAuthError(null);
+                  }}
+                  className="text-[10px] font-bold text-[#d946ef] underline hover:text-fuchsia-400 uppercase tracking-wider transition-all mt-6 cursor-pointer"
+                >
+                  ⬅️ Voltar / Digitar outro e-mail
+                </button>
+              </div>
+            ) : (
+              <>
+                {/* Tabs Selector Navigation */}
             <div className="grid grid-cols-2 gap-2 bg-[#04010b]/80 p-1.5 rounded-2xl border border-fuchsia-500/10">
               <button
                 type="button"
@@ -1417,40 +1802,51 @@ export default function App() {
                     />
                   </div>
 
-                  <div className="space-y-1.5 flex flex-col justify-end">
-                    <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider pl-1 font-heading">Foto de Perfil (Direto do celular)</label>
-                    <div className="flex items-center gap-2.5">
-                      <div 
-                        onClick={() => document.getElementById("register-avatar-file")?.click()}
-                        className="w-12 h-12 rounded-full overflow-hidden border border-fuchsia-500/30 bg-[#050212]/90 cursor-pointer flex items-center justify-center relative hover:border-fuchsia-500 transition-all group shrink-0 shadow shadow-fuchsia-950"
-                      >
-                        {registerAvatarUrl ? (
-                          <img src={registerAvatarUrl} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        ) : (
-                          <span className="text-lg">📷</span>
-                        )}
-                        {isUploadingAvatar && (
-                          <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-                            <span className="text-[9px] text-[#39df1d] font-bold animate-pulse">...</span>
-                          </div>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => document.getElementById("register-avatar-file")?.click()}
-                        disabled={isUploadingAvatar}
-                        className="flex-1 py-3 text-[10px] font-extrabold uppercase border border-fuchsia-500/20 bg-fuchsia-950/20 text-fuchsia-300 hover:bg-fuchsia-500/15 rounded-2xl cursor-pointer disabled:opacity-50 text-center transition-all flex items-center justify-center gap-1.5"
-                      >
-                        {isUploadingAvatar ? "✨ Enviando..." : "📸 Escolher da Galeria / Câmera"}
-                      </button>
-                      <input 
-                        id="register-avatar-file"
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={handleRegisterAvatarUpload}
-                      />
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider pl-1">Data de Nascimento (Aniversário Soka) (*)</label>
+                    <input
+                      type="date"
+                      required
+                      value={registerBirthDate}
+                      onChange={(e) => setRegisterBirthDate(e.target.value)}
+                      className="w-full text-xs font-semibold border border-fuchsia-500/15 rounded-2xl px-3.5 py-3 bg-[#050212]/90 text-slate-100 outline-none focus:border-fuchsia-500/60 transition-all text-slate-350"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 flex flex-col justify-end">
+                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider pl-1 font-heading">Foto de Perfil (Direto do celular)</label>
+                  <div className="flex items-center gap-2.5">
+                    <div 
+                      onClick={() => document.getElementById("register-avatar-file")?.click()}
+                      className="w-12 h-12 rounded-full overflow-hidden border border-fuchsia-500/30 bg-[#050212]/90 cursor-pointer flex items-center justify-center relative hover:border-fuchsia-500 transition-all group shrink-0 shadow shadow-fuchsia-950"
+                    >
+                      {registerAvatarUrl ? (
+                        <img src={registerAvatarUrl} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <span className="text-lg">📷</span>
+                      )}
+                      {isUploadingAvatar && (
+                        <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                          <span className="text-[9px] text-[#39df1d] font-bold animate-pulse">...</span>
+                        </div>
+                      )}
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => document.getElementById("register-avatar-file")?.click()}
+                      disabled={isUploadingAvatar}
+                      className="flex-1 py-3 text-[10px] font-extrabold uppercase border border-fuchsia-500/20 bg-fuchsia-950/20 text-fuchsia-300 hover:bg-fuchsia-500/15 rounded-2xl cursor-pointer disabled:opacity-50 text-center transition-all flex items-center justify-center gap-1.5"
+                    >
+                      {isUploadingAvatar ? "✨ Enviando..." : "📸 Escolher da Galeria / Câmera"}
+                    </button>
+                    <input 
+                      id="register-avatar-file"
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleRegisterAvatarUpload}
+                    />
                   </div>
                 </div>
 
@@ -1547,6 +1943,8 @@ export default function App() {
                 </button>
               </form>
             )}
+            </>
+            )}
 
             {/* Inner Card Slogan Footer */}
             <div className="pt-3 border-t border-fuchsia-500/10 flex items-center justify-center gap-2">
@@ -1558,6 +1956,73 @@ export default function App() {
               </p>
             </div>
           </div>
+
+          {/* DEBUG SANDBOX PANELS WITH INTERCEPTED EMAILS */}
+          {firebaseAuth?.currentUser && (
+            <div className="mt-8 pt-4 space-y-6 max-w-lg mx-auto w-full text-slate-300">
+              {/* IN-APP INTERCEPTED SMTP EMAILS & NOTIFICATIONS */}
+              <div className="bg-[#050212]/90 border border-fuchsia-500/15 p-4 rounded-3xl shadow-2xl space-y-3">
+                <div className="flex items-center justify-between border-b border-fuchsia-500/10 pb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base text-fuchsia-400">📬</span>
+                    <h3 className="text-[11px] font-black uppercase text-fuchsia-400 tracking-wider font-heading">
+                      Console de E-mails Interceptados
+                    </h3>
+                  </div>
+                  <span className="text-[9px] font-mono bg-fuchsia-950/30 text-fuchsia-300 border border-fuchsia-500/20 px-2 py-0.5 rounded-full animate-pulse">
+                    Monitoramento Ativo
+                  </span>
+                </div>
+                
+                <p className="text-[10px] text-slate-400 leading-normal">
+                  Todas as confirmações de cadastro e e-mails de boas-vindas acionadas pelo servidor são exibidas abaixo em tempo real:
+                </p>
+
+                {interceptedEmails.length === 0 ? (
+                  <div className="p-4 border border-dashed border-slate-850 rounded-2xl text-center text-[10px] text-slate-500">
+                    Nenhum e-mail de boas-vindas interceptado nesta sessão ainda.<br/>
+                    Cadastre uma nova conta para ver seu e-mail aparecer aqui instantaneamente!
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                    {interceptedEmails.map((mail) => (
+                      <div key={mail.id} className="border border-slate-850 p-2.5 rounded-2xl bg-slate-950/40 space-y-1 text-left">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-slate-300">Para: <span className="text-fuchsia-300">{mail.to}</span></span>
+                          <span className="text-[8px] text-slate-500 font-mono">
+                            {new Date(mail.timestamp).toLocaleTimeString()}
+                          </span>
+                        </div>
+                        <p className="text-[9.5px] font-semibold text-slate-400">Assunto: <span className="text-slate-200">{mail.subject}</span></p>
+                        
+                        <div className="pt-1.5 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedEmailId(expandedEmailId === mail.id ? null : mail.id)}
+                            className="bg-fuchsia-950/40 text-fuchsia-300 border border-fuchsia-500/20 hover:bg-fuchsia-900/40 px-2 py-1 rounded-xl text-[9px] font-bold transition-all cursor-pointer"
+                          >
+                            {expandedEmailId === mail.id ? "🙈 Ocultar Conteúdo" : "👀 Ver E-mail Completo"}
+                          </button>
+                        </div>
+
+                        {expandedEmailId === mail.id && (
+                          <div className="mt-2.5 p-3 rounded-xl border border-fuchsia-500/10 bg-black/80 space-y-2 overflow-x-auto">
+                            <p className="text-[9px] text-[#39df1d] font-bold font-mono uppercase tracking-wider mb-1">Visualização do HTML:</p>
+                            <div 
+                              className="bg-white text-slate-900 p-3 rounded-lg text-xs leading-relaxed max-w-full overflow-hidden" 
+                              dangerouslySetInnerHTML={{ __html: mail.html }} 
+                            />
+                            <p className="text-[9px] text-slate-500 font-mono uppercase tracking-wider mt-2.5 mb-1">Texto Puro:</p>
+                            <pre className="text-[9px] text-slate-350 font-mono whitespace-pre-wrap leading-normal border-t border-slate-900 pt-2">{mail.text}</pre>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
 
         </div>
@@ -1584,6 +2049,78 @@ export default function App() {
     ? fontSizes[currentUser.accessibility.fontSize as keyof typeof fontSizes] || ""
     : "";
   const isHighContrast = currentUser?.accessibility?.highContrast || false;
+
+  const daimokuTimerProps = {
+    duration: daimokuTimerDuration,
+    setDuration: (mins: number) => {
+      setDaimokuTimerDuration(mins);
+      setDaimokuTimerSecondsRemaining(mins * 60);
+      localStorage.setItem("daimoku_timer_duration", mins.toString());
+    },
+    isRunning: daimokuTimerIsRunning,
+    secondsRemaining: daimokuTimerSecondsRemaining,
+    audioType: daimokuTimerAudioType,
+    setAudioType: (type: "none" | "lento" | "vibrante" | "sensei") => {
+      setDaimokuTimerAudioType(type);
+      localStorage.setItem("daimoku_timer_audio", type);
+    },
+    volume: daimokuVolume,
+    setVolume: (v: number) => {
+      setDaimokuVolume(v);
+      localStorage.setItem("daimoku_timer_volume", v.toString());
+    },
+    startTimer: () => {
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          const ctx = new AudioContextClass();
+          const osc = ctx.createOscillator();
+          const gainNode = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(220, ctx.currentTime);
+          gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 3.0);
+          osc.connect(gainNode);
+          gainNode.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 3.0);
+        }
+      } catch (e) {}
+
+      if (!localStorage.getItem("daimoku_timer_start_timestamp")) {
+        localStorage.setItem("daimoku_timer_start_timestamp", new Date().toISOString());
+      }
+
+      const target = Date.now() + daimokuTimerSecondsRemaining * 1000;
+      localStorage.setItem("daimoku_timer_target_timestamp", target.toString());
+      localStorage.setItem("daimoku_timer_running", "true");
+      setDaimokuTimerIsRunning(true);
+    },
+    pauseTimer: () => {
+      localStorage.setItem("daimoku_timer_running", "false");
+      setDaimokuTimerIsRunning(false);
+    },
+    resetTimer: () => {
+      localStorage.setItem("daimoku_timer_running", "false");
+      localStorage.removeItem("daimoku_timer_target_timestamp");
+      localStorage.removeItem("daimoku_timer_start_timestamp");
+      setDaimokuTimerIsRunning(false);
+      setDaimokuTimerSecondsRemaining(daimokuTimerDuration * 60);
+    },
+    finishTimerEarly: () => {
+      localStorage.setItem("daimoku_timer_running", "false");
+      localStorage.removeItem("daimoku_timer_target_timestamp");
+      setDaimokuTimerIsRunning(false);
+
+      const totalMins = daimokuTimerDuration;
+      const remSecs = daimokuTimerSecondsRemaining;
+      const actualMins = Math.max(0.1, Number(((totalMins * 60 - remSecs) / 60).toFixed(2)));
+      
+      setDaimokuCompletedMinutes(actualMins);
+      setShowDaimokuCompletedModal(true);
+      playTraditionalThreeBells();
+    }
+  };
 
   return (
     <div className={`min-h-screen bg-transparent flex flex-col font-sans selection:bg-soka-orange selection:text-white ${activeFontSizeClass} ${isHighContrast ? "accessibility-high-contrast bg-black text-white" : ""}`} id="main-layout-root">
@@ -2374,6 +2911,7 @@ export default function App() {
                     setCurrentUser(updated);
                     setUsers(users.map(u => u.id === updated.id ? updated : u));
                   }}
+                  firebaseAuth={firebaseAuth}
                 />
               )}
 
@@ -2387,6 +2925,7 @@ export default function App() {
                     setCurrentUser(updated);
                     setUsers(users.map(u => u.id === updated.id ? updated : u));
                   }}
+                  firebaseAuth={firebaseAuth}
                 />
               )}
 
@@ -2401,6 +2940,8 @@ export default function App() {
                     setCurrentUser(updated);
                     setUsers(users.map(u => u.id === updated.id ? updated : u));
                   }}
+                  firebaseAuth={firebaseAuth}
+                  daimokuTimerProps={daimokuTimerProps}
                 />
               )}
 
@@ -2414,6 +2955,7 @@ export default function App() {
                     setCurrentUser(updated);
                     setUsers(users.map(u => u.id === updated.id ? updated : u));
                   }}
+                  firebaseAuth={firebaseAuth}
                 />
               )}
 
@@ -2425,6 +2967,7 @@ export default function App() {
                     handleNewPost(text, "");
                     setLoggerSuccessMsg("Conquista compartilhada no feed com sucesso!");
                   }}
+                  firebaseAuth={firebaseAuth}
                 />
               )}
 
@@ -2677,6 +3220,7 @@ export default function App() {
                     onSubmitCombined={handleNewCombinedPost}
                     onSelectUser={(u) => setSelectedPublicUser(u)}
                     onPostCreated={fetchAllData}
+                    firebaseAuth={firebaseAuth}
                   />
                 </div>
               )}
@@ -2692,72 +3236,7 @@ export default function App() {
                     setLoggerSuccessMsg(null);
                     setLoggerErrorMsg(null);
                   }}
-                  daimokuTimerProps={{
-                    duration: daimokuTimerDuration,
-                    setDuration: (mins: number) => {
-                      setDaimokuTimerDuration(mins);
-                      setDaimokuTimerSecondsRemaining(mins * 60);
-                      localStorage.setItem("daimoku_timer_duration", mins.toString());
-                    },
-                    isRunning: daimokuTimerIsRunning,
-                    secondsRemaining: daimokuTimerSecondsRemaining,
-                    audioType: daimokuTimerAudioType,
-                    setAudioType: (type: "none" | "lento" | "vibrante" | "sensei") => {
-                      setDaimokuTimerAudioType(type);
-                      localStorage.setItem("daimoku_timer_audio", type);
-                    },
-                    volume: daimokuVolume,
-                    setVolume: (v: number) => {
-                      setDaimokuVolume(v);
-                      localStorage.setItem("daimoku_timer_volume", v.toString());
-                    },
-                    startTimer: () => {
-                      try {
-                        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-                        if (AudioContextClass) {
-                          const ctx = new AudioContextClass();
-                          const osc = ctx.createOscillator();
-                          const gainNode = ctx.createGain();
-                          osc.type = "sine";
-                          osc.frequency.setValueAtTime(220, ctx.currentTime);
-                          gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
-                          gainNode.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 3.0);
-                          osc.connect(gainNode);
-                          gainNode.connect(ctx.destination);
-                          osc.start();
-                          osc.stop(ctx.currentTime + 3.0);
-                        }
-                      } catch (e) {}
-
-                      const target = Date.now() + daimokuTimerSecondsRemaining * 1000;
-                      localStorage.setItem("daimoku_timer_target_timestamp", target.toString());
-                      localStorage.setItem("daimoku_timer_running", "true");
-                      setDaimokuTimerIsRunning(true);
-                    },
-                    pauseTimer: () => {
-                      localStorage.setItem("daimoku_timer_running", "false");
-                      setDaimokuTimerIsRunning(false);
-                    },
-                    resetTimer: () => {
-                      localStorage.setItem("daimoku_timer_running", "false");
-                      localStorage.removeItem("daimoku_timer_target_timestamp");
-                      setDaimokuTimerIsRunning(false);
-                      setDaimokuTimerSecondsRemaining(daimokuTimerDuration * 60);
-                    },
-                    finishTimerEarly: () => {
-                      localStorage.setItem("daimoku_timer_running", "false");
-                      localStorage.removeItem("daimoku_timer_target_timestamp");
-                      setDaimokuTimerIsRunning(false);
-
-                      const totalMins = daimokuTimerDuration;
-                      const remSecs = daimokuTimerSecondsRemaining;
-                      const actualMins = Math.max(1, Math.round((totalMins * 60 - remSecs) / 60));
-                      
-                      setDaimokuCompletedMinutes(actualMins);
-                      setShowDaimokuCompletedModal(true);
-                      playTraditionalThreeBells();
-                    }
-                  }}
+                  daimokuTimerProps={daimokuTimerProps}
                 />
               )}
 
@@ -2797,12 +3276,14 @@ export default function App() {
                 <MuralVitorias
                   currentUser={currentUser}
                   onSelectUser={(u) => setSelectedPublicUser(u)}
+                  firebaseAuth={firebaseAuth}
                 />
               )}
 
               {activeTab === "avisos" && (
                 <AvisosComunidade
                   currentUser={currentUser}
+                  firebaseAuth={firebaseAuth}
                 />
               )}
 
@@ -2827,6 +3308,7 @@ export default function App() {
                   onAddCommunity={handleAddCommunity}
                   users={users}
                   activities={activities}
+                  firebaseAuth={firebaseAuth}
                 />
               )}
 
@@ -2970,12 +3452,14 @@ export default function App() {
               {activeTab === "configuracoes" && (
                 <SettingsPanel
                   currentUser={currentUser}
+                  users={users}
                   onUpdateUser={(updated) => {
                     setCurrentUser(updated);
                     setUsers(users.map(u => u.id === updated.id ? updated : u));
                   }}
                   onLogout={handleMenuLogout}
                   onInstallApp={handleInstallApp}
+                  firebaseAuth={firebaseAuth}
                 />
               )}
 
@@ -2990,6 +3474,7 @@ export default function App() {
                   setLoggerSuccessMsg={setLoggerSuccessMsg}
                   setLoggerErrorMsg={setLoggerErrorMsg}
                   sendLocalNotification={sendSystemNotification}
+                  firebaseAuth={firebaseAuth}
                 />
               )}
 
@@ -4050,11 +4535,23 @@ export default function App() {
                   type="button"
                   onClick={async () => {
                     if (currentUser) {
+                      const startIso = localStorage.getItem("daimoku_timer_start_timestamp") || 
+                        new Date(Date.now() - daimokuCompletedMinutes * 60 * 1000).toISOString();
+                      const endIso = new Date().toISOString();
+
                       await handleLogActivity({
                         type: "daimoku",
                         minutes: daimokuCompletedMinutes,
-                        notes: daimokuCustomNote || "Prática concluída com sucesso via Cronômetro Ativo BodhiShape 🪷"
+                        notes: daimokuCustomNote || "Prática concluída com sucesso via Cronômetro Ativo BodhiShape 🪷",
+                        startTimestamp: startIso,
+                        endTimestamp: endIso
                       });
+
+                      // Clear all timer state upon database recording
+                      localStorage.removeItem("daimoku_timer_start_timestamp");
+                      localStorage.removeItem("daimoku_timer_target_timestamp");
+                      localStorage.setItem("daimoku_timer_running", "false");
+                      setDaimokuTimerSecondsRemaining(daimokuTimerDuration * 60);
                     }
                     setShowDaimokuCompletedModal(false);
                     setDaimokuCustomNote("");
