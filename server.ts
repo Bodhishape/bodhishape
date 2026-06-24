@@ -1624,8 +1624,9 @@ app.post("/api/users/update", async (req: any, res) => {
     return res.status(400).json({ error: "ID de usuário é obrigatório." });
   }
 
-  // Sincroniza dados mais recentes em nuvem do usuário antes de mesclar novas atualizações
-  if (req.idToken) {
+  // Sincroniza dados mais recentes em nuvem do usuário apenas se não houver alterações no body
+  const hasUpdates = Object.keys(req.body).some(key => key !== "userId");
+  if (!hasUpdates && req.idToken) {
     await syncUserFromFirestore(userId, req.idToken);
   }
 
@@ -3416,7 +3417,6 @@ app.post("/api/reminders", (req: any, res) => {
 
   dbData.reminders.push(newReminder);
   writeDB(dbData, req.idToken);
-  persistDoc("reminders", newReminder.id, newReminder, req.idToken);
 
   res.status(201).json(newReminder);
 });

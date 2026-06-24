@@ -3268,6 +3268,11 @@ export default function App() {
                     setLoggerErrorMsg(null);
                   }}
                   daimokuTimerProps={daimokuTimerProps}
+                  onShowDaimokuModal={(elapsedMins) => {
+                    setDaimokuCompletedMinutes(elapsedMins);
+                    setShowDaimokuCompletedModal(true);
+                    playTraditionalThreeBells();
+                  }}
                 />
               )}
 

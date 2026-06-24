@@ -34,6 +34,7 @@ interface ActivityLoggerProps {
     resetTimer: () => void;
     finishTimerEarly: () => void;
   };
+  onShowDaimokuModal?: (elapsedMins: number) => void;
 }
 
 interface VisualCategory {
@@ -51,6 +52,7 @@ export default function ActivityLogger({
   successMsg,
   onClearMsgs,
   daimokuTimerProps,
+  onShowDaimokuModal,
 }: ActivityLoggerProps) {
   const currentUserId = currentUser?.id || "anon";
 
@@ -64,7 +66,8 @@ export default function ActivityLogger({
 
   const [daimokuMode, setDaimokuMode] = useState<"cronometro" | "manual">("cronometro");
   const [isCustomDaimokuTime, setIsCustomDaimokuTime] = useState<boolean>(false);
-  const [timerSeconds, setTimerSeconds] = useState<number>(0);
+  const [timerDuration, setTimerDuration] = useState<number>(15);
+  const [timerSeconds, setTimerSeconds] = useState<number>(15 * 60);
   const [isTimerRunning, setIsTimerRunning] = useState<boolean>(false);
   const [timerIntervalId, setTimerIntervalId] = useState<any>(null);
 
@@ -259,7 +262,17 @@ export default function ActivityLogger({
     setIsTimerRunning(true);
     playBellChime();
     const interval = setInterval(() => {
-      setTimerSeconds((prev) => prev + 1);
+      setTimerSeconds((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setIsTimerRunning(false);
+          setTimeout(() => {
+            handleFinishTimer();
+          }, 100);
+          return 0;
+        }
+        return prev - 1;
+      });
     }, 1000);
     setTimerIntervalId(interval);
   };
@@ -275,7 +288,7 @@ export default function ActivityLogger({
 
   const handleResetTimer = () => {
     handlePauseTimer();
-    setTimerSeconds(0);
+    setTimerSeconds(timerDuration * 60);
   };
 
   const buildTimestamp = () => {
@@ -293,17 +306,22 @@ export default function ActivityLogger({
     handlePauseTimer();
     playBellChime();
     
-    if (timerSeconds <= 0) return;
-    const computedMins = Math.max(1, Math.round(timerSeconds / 60));
+    const elapsedSecs = timerDuration * 60 - timerSeconds;
+    if (elapsedSecs <= 0) return;
+    const computedMins = Math.max(1, Math.round(elapsedSecs / 60));
     
-    onLogActivity({
-      type: "daimoku",
-      minutes: computedMins,
-      notes: notes || `Sessão de Daimoku realizada via cronômetro nativo! (${computedMins} min) 🪷`,
-      customTimestamp: buildTimestamp()
-    });
+    if (onShowDaimokuModal) {
+      onShowDaimokuModal(computedMins);
+    } else {
+      onLogActivity({
+        type: "daimoku",
+        minutes: computedMins,
+        notes: notes || `Sessão de Daimoku realizada via cronômetro nativo! (${computedMins} min) 🪷`,
+        customTimestamp: buildTimestamp()
+      });
+    }
     
-    setTimerSeconds(0);
+    setTimerSeconds(timerDuration * 60);
     setNotes("");
   };
 
@@ -842,8 +860,11 @@ export default function ActivityLogger({
 
               {(() => {
                 const timerData = daimokuTimerProps || {
-                  duration: 15,
-                  setDuration: () => {},
+                  duration: timerDuration,
+                  setDuration: (mins: number) => {
+                    setTimerDuration(mins);
+                    setTimerSeconds(mins * 60);
+                  },
                   isRunning: isTimerRunning,
                   secondsRemaining: timerSeconds,
                   audioType: "none",
