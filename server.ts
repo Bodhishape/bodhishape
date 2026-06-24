@@ -219,6 +219,81 @@ let dbData: any = {
   system_config: { trialStartDate: new Date().toISOString() }
 };
 
+let lastValidUserToken: string | null = null;
+
+async function getAnonymousIdToken(): Promise<string | null> {
+  if (!firebaseConfig || !firebaseConfig.apiKey) return null;
+  try {
+    const url = `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${firebaseConfig.apiKey}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ returnSecureToken: true })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data.idToken;
+    } else {
+      console.error("[FIREBASE_REST] Anonymous sign-in failed:", await res.text());
+    }
+  } catch (err: any) {
+    console.error("[FIREBASE_REST] Error getting anonymous token:", err.message);
+  }
+  return null;
+}
+
+async function fetchCollectionFromFirestore(collectionId: string, token: string): Promise<any[]> {
+  if (!firebaseConfig) return [];
+  const projectId = firebaseConfig.projectId;
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${collectionId}?pageSize=300`;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "Authorization": `Bearer ${token}`
+      }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const docs = data.documents || [];
+      return docs.map(parseFirestoreDoc).filter(Boolean);
+    } else {
+      console.warn(`[FIREBASE_REST] Fetching collection ${collectionId} failed: ${res.status}`);
+    }
+  } catch (err: any) {
+    console.error(`[FIREBASE_REST] Exception fetching collection ${collectionId}:`, err.message);
+  }
+  return [];
+}
+
+function mergeFirestoreCollection(colName: string, fetchedDocs: any[]) {
+  if (!Array.isArray(fetchedDocs)) return;
+  if (!dbData[colName]) dbData[colName] = [];
+  
+  for (const remoteDoc of fetchedDocs) {
+    let docId = remoteDoc.id;
+    if (!docId) {
+      if (colName === "kofu") docId = `${remoteDoc.userId}_${remoteDoc.campaignId}`;
+      else if (colName === "bs_subscription") docId = remoteDoc.userId;
+    }
+    if (!docId) continue;
+    
+    const index = dbData[colName].findIndex((localDoc: any) => {
+      let localId = localDoc.id;
+      if (!localId) {
+        if (colName === "kofu") localId = `${localDoc.userId}_${localDoc.campaignId}`;
+        else if (colName === "bs_subscription") localId = localDoc.userId;
+      }
+      return localId === docId;
+    });
+    
+    if (index !== -1) {
+      dbData[colName][index] = { ...dbData[colName][index], ...remoteDoc };
+    } else {
+      dbData[colName].push(remoteDoc);
+    }
+  }
+}
+
 // Seeding and synchronizing memory state on boot
 async function seedAndLoadFromFirestore() {
   // Load local file database.json as backup and seeding reference
@@ -236,8 +311,66 @@ async function seedAndLoadFromFirestore() {
   if (!dbData.feedbacks) dbData.feedbacks = [];
   if (!dbData.lives) dbData.lives = [];
   if (!dbData.live_comments) dbData.live_comments = [];
+  if (!dbData.users) dbData.users = [];
+  if (!dbData.activities) dbData.activities = [];
+  if (!dbData.posts) dbData.posts = [];
+  if (!dbData.goals) dbData.goals = [];
+  if (!dbData.communities) dbData.communities = [];
+  if (!dbData.kofu) dbData.kofu = [];
+  if (!dbData.bs_subscription) dbData.bs_subscription = [];
+  if (!dbData.chats) dbData.chats = [];
+  if (!dbData.stories) dbData.stories = [];
+  if (!dbData.persistent_media) dbData.persistent_media = [];
+  if (!dbData.reminders) dbData.reminders = [];
+  if (!dbData.notices) dbData.notices = [];
+
   console.log("[FIREBASE] Initialized database state smoothly from local JSON cache.");
-  return;
+
+  if (!firebaseConfig) {
+    console.warn("[FIREBASE] Skipping Firestore sync on boot: Firebase is not configured.");
+    return;
+  }
+
+  console.log("[FIREBASE] Starting boot sync with Firestore...");
+  const token = await getAnonymousIdToken();
+  if (!token) {
+    console.warn("[FIREBASE] Boot sync warning: Could not obtain anonymous token. Operating with local cache.");
+    return;
+  }
+
+  const publicCollections = ["users", "activities", "posts", "communities", "chats", "stories", "persistent_media", "notices", "lives", "live_comments", "feedbacks"];
+  for (const col of publicCollections) {
+    try {
+      const fetchedDocs = await fetchCollectionFromFirestore(col, token);
+      if (fetchedDocs && fetchedDocs.length > 0) {
+        mergeFirestoreCollection(col, fetchedDocs);
+        console.log(`[FIREBASE] Boot sync: Merged ${fetchedDocs.length} items from collection '${col}'`);
+      }
+    } catch (err: any) {
+      console.warn(`[FIREBASE] Boot sync warning for collection '${col}':`, err.message);
+    }
+  }
+
+  // Also try private collections (may fail due to rules, but handle gracefully)
+  const privateCollections = ["goals", "kofu", "bs_subscription", "reminders"];
+  for (const col of privateCollections) {
+    try {
+      const fetchedDocs = await fetchCollectionFromFirestore(col, token);
+      if (fetchedDocs && fetchedDocs.length > 0) {
+        mergeFirestoreCollection(col, fetchedDocs);
+        console.log(`[FIREBASE] Boot sync: Merged ${fetchedDocs.length} items from collection '${col}'`);
+      }
+    } catch (err: any) {
+      // expected to fail if permissions are restricted, so log as debug/silent
+    }
+  }
+
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), "utf8");
+    console.log("[FIREBASE] Local cache updated with Firestore boot sync data.");
+  } catch (err: any) {
+    console.error("[FIREBASE] Error saving boot sync data to disk:", err.message);
+  }
 }
 
 // Deserializador de valores do Firestore REST API
@@ -843,6 +976,7 @@ app.use("/api", async (req: any, res: any, next: any) => {
     try {
       const payload = await verifyFirebaseToken(idToken, firebaseConfig.projectId);
       if (payload && payload.sub) {
+        lastValidUserToken = idToken; // Capture latest valid user token for background sync
         const userId = payload.sub;
         const now = Date.now();
         const lastSync = lastSyncTime.get(userId) || 0;
@@ -3564,6 +3698,53 @@ async function setupViteServerOrProd() {
   });
 }
 
+async function syncAllFromFirestore() {
+  if (!firebaseConfig) return;
+  console.log("[FIREBASE_SYNC] Initiating scheduled full database synchronization...");
+  try {
+    let token = lastValidUserToken;
+    if (!token) {
+      token = await getAnonymousIdToken();
+    }
+    if (!token) {
+      console.warn("[FIREBASE_SYNC] Skipping synchronization: No auth token available.");
+      return;
+    }
+
+    const publicCollections = ["users", "activities", "posts", "communities", "chats", "stories", "persistent_media", "notices", "lives", "live_comments", "feedbacks"];
+    for (const col of publicCollections) {
+      try {
+        const fetchedDocs = await fetchCollectionFromFirestore(col, token);
+        if (fetchedDocs && fetchedDocs.length > 0) {
+          mergeFirestoreCollection(col, fetchedDocs);
+          console.log(`[FIREBASE_SYNC] Synced ${fetchedDocs.length} items from collection '${col}'`);
+        }
+      } catch (err: any) {
+        console.warn(`[FIREBASE_SYNC] Sync warning for collection '${col}':`, err.message);
+      }
+    }
+
+    // Also try private collections (fails if anonymous token, but succeeds if we have a real user token)
+    const privateCollections = ["goals", "kofu", "bs_subscription", "reminders"];
+    for (const col of privateCollections) {
+      try {
+        const fetchedDocs = await fetchCollectionFromFirestore(col, token);
+        if (fetchedDocs && fetchedDocs.length > 0) {
+          mergeFirestoreCollection(col, fetchedDocs);
+          console.log(`[FIREBASE_SYNC] Synced ${fetchedDocs.length} items from collection '${col}'`);
+        }
+      } catch (err: any) {
+        // quiet fail
+      }
+    }
+
+    fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), "utf8");
+    console.log("[FIREBASE_SYNC] Scheduled synchronization completed successfully.");
+  } catch (error: any) {
+    console.error("[FIREBASE_SYNC] Scheduled synchronization exception:", error.message);
+  }
+}
+
 // Core Bootstrap entry point to enforce sequence on startup
 async function bootstrap() {
   console.log("[BOOTSTRAP] Commencing BodhiShape production server initialization...");
@@ -3607,6 +3788,11 @@ async function bootstrap() {
 
   // 3. Sync memory state with Firestore safely (now rule privileged!)
   await seedAndLoadFromFirestore();
+
+  // Schedule periodic full sync every 5 minutes
+  setInterval(() => {
+    syncAllFromFirestore().catch(err => console.error("[FIREBASE_SYNC] Background sync failed:", err));
+  }, 5 * 60 * 1000);
 
   // 4. Initialize Express & Vite server
   await setupViteServerOrProd();
