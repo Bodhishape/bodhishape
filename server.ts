@@ -213,6 +213,9 @@ let dbData: any = {
   chats: [],
   stories: [],
   reminders: [],
+  feedbacks: [],
+  lives: [],
+  live_comments: [],
   system_config: { trialStartDate: new Date().toISOString() }
 };
 
@@ -230,12 +233,179 @@ async function seedAndLoadFromFirestore() {
 
   // Initialize in-memory cache with local records
   dbData = localDbSeed;
+  if (!dbData.feedbacks) dbData.feedbacks = [];
+  if (!dbData.lives) dbData.lives = [];
+  if (!dbData.live_comments) dbData.live_comments = [];
   console.log("[FIREBASE] Initialized database state smoothly from local JSON cache.");
   return;
 }
 
+// Deserializador de valores do Firestore REST API
+function fromFirestoreValue(val: any): any {
+  if (!val) return null;
+  if ("stringValue" in val) return val.stringValue;
+  if ("integerValue" in val) return parseInt(val.integerValue, 10);
+  if ("doubleValue" in val) return parseFloat(val.doubleValue);
+  if ("booleanValue" in val) return val.booleanValue;
+  if ("arrayValue" in val) {
+    const values = val.arrayValue.values || [];
+    return values.map(fromFirestoreValue);
+  }
+  if ("mapValue" in val) {
+    const fields = val.mapValue.fields || {};
+    const res: any = {};
+    for (const k of Object.keys(fields)) {
+      res[k] = fromFirestoreValue(fields[k]);
+    }
+    return res;
+  }
+  return null;
+}
+
+// Parser de documentos retornados pelo Firestore REST API
+function parseFirestoreDoc(doc: any): any {
+  if (!doc || !doc.fields) return null;
+  const res: any = {};
+  if (doc.name) {
+    const parts = doc.name.split("/");
+    res.id = parts[parts.length - 1];
+  }
+  for (const k of Object.keys(doc.fields)) {
+    res[k] = fromFirestoreValue(doc.fields[k]);
+  }
+  return res;
+}
+
+// Sincroniza dados específicos do usuário de forma real e reativa a partir do Firestore em nuvem
+async function syncUserFromFirestore(userId: string, idToken: string) {
+  if (!firebaseConfig || !idToken || !userId) return;
+
+  const projectId = firebaseConfig.projectId;
+  const baseUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
+  const headers = {
+    "Authorization": `Bearer ${idToken}`,
+    "Content-Type": "application/json"
+  };
+
+  try {
+    // 1. Obter Perfil do Usuário
+    const userRes = await fetch(`${baseUrl}/users/${userId}`, { headers });
+    if (userRes.ok) {
+      const userDoc = await userRes.json();
+      const parsedUser = parseFirestoreDoc(userDoc);
+      if (parsedUser) {
+        const index = dbData.users.findIndex((u: any) => u.id === userId);
+        if (index !== -1) {
+          dbData.users[index] = { ...dbData.users[index], ...parsedUser };
+        } else {
+          dbData.users.push(parsedUser);
+        }
+      }
+    }
+
+    // Helper genérico para buscar dados de uma subcoleção por userId
+    const queryCollection = async (collectionId: string) => {
+      const queryBody = {
+        structuredQuery: {
+          from: [{ collectionId }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath: "userId" },
+              op: "EQUAL",
+              value: { stringValue: userId }
+            }
+          }
+        }
+      };
+
+      const qRes = await fetch(`${baseUrl}:runQuery`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(queryBody)
+      });
+
+      if (qRes.ok) {
+        const results = await qRes.json();
+        const docs: any[] = [];
+        if (Array.isArray(results)) {
+          for (const item of results) {
+            if (item.document) {
+              const parsed = parseFirestoreDoc(item.document);
+              if (parsed) docs.push(parsed);
+            }
+          }
+        }
+        return docs;
+      }
+      return null;
+    };
+
+    // 2. Buscar Atividades históricas do usuário
+    const activities = await queryCollection("activities");
+    if (activities) {
+      dbData.activities = dbData.activities.filter((a: any) => a.userId !== userId);
+      dbData.activities.push(...activities);
+    }
+
+    // 3. Buscar Objetivos do usuário
+    const goals = await queryCollection("goals");
+    if (goals) {
+      dbData.goals = dbData.goals.filter((g: any) => g.userId !== userId);
+      dbData.goals.push(...goals);
+    }
+
+    // 4. Buscar Inscrição BS do usuário
+    const bsRes = await fetch(`${baseUrl}/bs_subscription/${userId}`, { headers });
+    if (bsRes.ok) {
+      const bsDoc = await bsRes.json();
+      const parsedBs = parseFirestoreDoc(bsDoc);
+      if (parsedBs) {
+        const index = dbData.bs_subscription.findIndex((b: any) => b.userId === userId);
+        if (index !== -1) {
+          dbData.bs_subscription[index] = parsedBs;
+        } else {
+          dbData.bs_subscription.push(parsedBs);
+        }
+      }
+    }
+
+    // 5. Buscar Contribuição Kofu do usuário
+    const kofuRes = await fetch(`${baseUrl}/kofu/${userId}_campanha_3_2026`, { headers });
+    if (kofuRes.ok) {
+      const kofuDoc = await kofuRes.json();
+      const parsedKofu = parseFirestoreDoc(kofuDoc);
+      if (parsedKofu) {
+        const index = dbData.kofu.findIndex((k: any) => k.userId === userId && k.campaignId === "campanha_3_2026");
+        if (index !== -1) {
+          dbData.kofu[index] = parsedKofu;
+        } else {
+          dbData.kofu.push(parsedKofu);
+        }
+      }
+    }
+
+    // 6. Buscar Lembretes/Agenda do usuário
+    const reminders = await queryCollection("reminders");
+    if (reminders) {
+      if (!dbData.reminders) dbData.reminders = [];
+      dbData.reminders = dbData.reminders.filter((r: any) => r.userId !== userId);
+      dbData.reminders.push(...reminders);
+    }
+
+    // Grava de volta no banco de dados local como backup de redundância
+    try {
+      fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), "utf8");
+    } catch (e) {
+      // falha silenciosa de escrita local não impede o funcionamento
+    }
+
+  } catch (error: any) {
+    console.error(`[FIREBASE_SYNC] Erro de sincronização em tempo real do Firestore:`, error.message);
+  }
+}
+
 // Persist document changes
-async function persistDoc(colName: string, docId: string, data: any, idToken?: string) {
+async function persistDoc(colName: string, docId: string, data: any, idToken?: string, options?: { isUpdate?: boolean }) {
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), "utf8");
   } catch (e) {
@@ -247,8 +417,8 @@ async function persistDoc(colName: string, docId: string, data: any, idToken?: s
     return;
   }
 
-  const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/${colName}/${docId}`;
-  
+  const isUpdate = options?.isUpdate ?? false;
+
   const fields: any = {};
   for (const k of Object.keys(data)) {
     if (k === "id") continue;
@@ -261,6 +431,9 @@ async function persistDoc(colName: string, docId: string, data: any, idToken?: s
     }
   }
 
+  const fieldPaths = Object.keys(fields).map(k => `updateMask.fieldPaths=${k}`).join("&");
+  const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/${colName}/${docId}${fieldPaths ? `?${fieldPaths}` : ""}`;
+  
   try {
     const res = await fetch(url, {
       method: "PATCH",
@@ -272,7 +445,30 @@ async function persistDoc(colName: string, docId: string, data: any, idToken?: s
     });
     if (!res.ok) {
       const errText = await res.text();
-      console.error(`[FIREBASE_REST] Write patch failed on ${colName}/${docId}:`, errText);
+      
+      // If we are performing an update, we MUST NOT perform a fallback write without updateMask.
+      // Doing so would replace the entire document in Firestore and completely wipe out any other fields.
+      if (isUpdate) {
+        console.error(`[FIREBASE_REST] Update failed on ${colName}/${docId} using updateMask:`, errText);
+        return;
+      }
+
+      console.warn(`[FIREBASE_REST] Write patch with updateMask failed on ${colName}/${docId}, retrying without updateMask to force document creation...`);
+      const fallbackUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/${colName}/${docId}`;
+      const retryRes = await fetch(fallbackUrl, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({ fields })
+      });
+      if (!retryRes.ok) {
+        const retryErrText = await retryRes.text();
+        console.error(`[FIREBASE_REST] Write retry failed on ${colName}/${docId}:`, retryErrText);
+      } else {
+        console.log(`[FIREBASE_REST] Successfully created document ${colName}/${docId} on retry.`);
+      }
     }
   } catch (error: any) {
     console.error(`[FIREBASE_REST] Write exception on ${colName}/${docId}:`, error.message);
@@ -340,7 +536,7 @@ function writeDB(data: any, idToken?: string) {
   // propagate change differences to Firebase Firestore asynchronously
   if (!firebaseConfig) return;
 
-  const collections = ["users", "activities", "posts", "goals", "communities", "kofu", "bs_subscription", "chats", "stories", "persistent_media", "memories", "notices"];
+  const collections = ["users", "activities", "posts", "goals", "communities", "kofu", "bs_subscription", "chats", "stories", "persistent_media", "memories", "notices", "lives", "live_comments", "feedbacks"];
   
   for (const col of collections) {
     const prevList = previousData[col] || [];
@@ -365,8 +561,20 @@ function writeDB(data: any, idToken?: string) {
         return pId === docId;
       });
       
-      if (!prevItem || JSON.stringify(prevItem) !== JSON.stringify(newItem)) {
-        persistDoc(col, docId, newItem, activeToken);
+      if (!prevItem) {
+        // Document was created - persist all fields safely
+        persistDoc(col, docId, newItem, activeToken, { isUpdate: false });
+      } else if (JSON.stringify(prevItem) !== JSON.stringify(newItem)) {
+        // Document was modified - calculate the delta of changed fields
+        const delta: any = {};
+        for (const k of Object.keys(newItem)) {
+          if (JSON.stringify(prevItem[k]) !== JSON.stringify(newItem[k])) {
+            delta[k] = newItem[k];
+          }
+        }
+        if (Object.keys(delta).length > 0) {
+          persistDoc(col, docId, delta, activeToken, { isUpdate: true });
+        }
       }
     }
     
@@ -402,49 +610,65 @@ function updateAndCalculateUserStreak(user: any, dbData: any, logTimestamp?: str
 
   const userActs = (dbData.activities || []).filter((a: any) => a.userId === user.id);
   
-  // Safe timezone date strings in America/Sao_Paulo (sv-SE gives YYYY-MM-DD format)
   const getLocalSaoPauloDateString = (dateInput?: string | number | Date) => {
-    const d = dateInput ? new Date(dateInput) : new Date();
+    if (!dateInput) return "";
+    const d = new Date(dateInput);
+    if (isNaN(d.getTime())) return "";
     return d.toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
   };
 
-  if (userActs.length === 0 && !logTimestamp) {
-    if (user.streak === undefined || user.streak === null) {
-      user.streak = 0;
+  const datesSet = new Set<string>();
+  
+  userActs.forEach((a: any) => {
+    const dateStr = getLocalSaoPauloDateString(a.timestamp || a.date);
+    if (dateStr) {
+      datesSet.add(dateStr);
     }
+  });
+
+  if (logTimestamp) {
+    const dateStr = getLocalSaoPauloDateString(logTimestamp);
+    if (dateStr) {
+      datesSet.add(dateStr);
+    }
+  }
+
+  const uniqueDays = Array.from(datesSet).filter(Boolean) as string[];
+  if (uniqueDays.length === 0) {
+    user.streak = 0;
     return;
   }
 
-  // Coleta as datas únicas (YYYY-MM-DD) de todas as atividades na timezone do usuário
-  const dates = userActs.map((a: any) => getLocalSaoPauloDateString(a.timestamp));
-  if (logTimestamp) {
-    dates.push(getLocalSaoPauloDateString(logTimestamp));
-  }
+  uniqueDays.sort((a, b) => b.localeCompare(a)); // sort descending (most recent first)
 
-  const uniqueDays = Array.from(new Set(dates)) as string[];
-  uniqueDays.sort((a, b) => b.localeCompare(a)); // Ordena em ordem decrescente (mais recente primeiro)
+  // Get current date string in Sao Paulo timezone
+  const todayStr = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+  
+  // Calculate yesterdayStr in America/Sao_Paulo in a timezone-safe way
+  const todayParts = todayStr.split("-").map(Number);
+  const todaySP = new Date(todayParts[0], todayParts[1] - 1, todayParts[2], 12, 0, 0); // Noon in local server time to avoid DST shifts
+  const yesterdaySP = new Date(todaySP.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayStr = `${yesterdaySP.getFullYear()}-${(yesterdaySP.getMonth() + 1).toString().padStart(2, "0")}-${yesterdaySP.getDate().toString().padStart(2, "0")}`;
 
-  const todayStr = getLocalSaoPauloDateString();
-  const yesterdayStr = getLocalSaoPauloDateString(new Date(Date.now() - 24 * 60 * 60 * 1000));
-
-  // Regra de negócio: Se o registro mais recente não for hoje nem ontem, a sequência está quebrada (0 dias)
+  // If the most recent active day is not today and not yesterday, sequence is broken
   if (uniqueDays[0] !== todayStr && uniqueDays[0] !== yesterdayStr) {
     user.streak = 0;
     return;
   }
 
-  // Calcula a sequência consecutiva contando de trás para frente no fuso local
+  // Calculate consecutive days
   let calculatedStreak = 1;
   for (let i = 0; i < uniqueDays.length - 1; i++) {
-    const d1 = new Date(uniqueDays[i]);
-    const d2 = new Date(uniqueDays[i + 1]);
-    const diffTime = d1.getTime() - d2.getTime();
-
-    const actualDiff = Math.abs(Math.round(diffTime / (1000 * 60 * 60 * 24)));
+    const currentDay = new Date(uniqueDays[i] + "T00:00:00Z");
+    const nextDay = new Date(uniqueDays[i + 1] + "T00:00:00Z");
+    
+    const diffTime = currentDay.getTime() - nextDay.getTime();
+    const actualDiff = Math.round(diffTime / (1000 * 60 * 60 * 24));
+    
     if (actualDiff === 1) {
       calculatedStreak++;
     } else if (actualDiff > 1) {
-      break; // Sequência interrompida
+      break; // Streak broken
     }
   }
 
@@ -609,6 +833,30 @@ app.use((req: any, res: any, next: any) => {
   requestContext.run({ idToken }, () => {
     next();
   });
+});
+
+const lastSyncTime = new Map<string, number>();
+
+app.use("/api", async (req: any, res: any, next: any) => {
+  const idToken = req.idToken;
+  if (idToken && firebaseConfig) {
+    try {
+      const payload = await verifyFirebaseToken(idToken, firebaseConfig.projectId);
+      if (payload && payload.sub) {
+        const userId = payload.sub;
+        const now = Date.now();
+        const lastSync = lastSyncTime.get(userId) || 0;
+        // If never synced in this container lifetime, or synced more than 30 seconds ago
+        if (now - lastSync > 30000) {
+          lastSyncTime.set(userId, now); // Set it early to prevent concurrent overlapping fetches
+          await syncUserFromFirestore(userId, idToken);
+        }
+      }
+    } catch (err: any) {
+      console.error("[AUTO_SYNC] Error in automatic Firestore sync middleware:", err.message);
+    }
+  }
+  next();
 });
 
 app.get("/api/firebase-config", (req, res) => {
@@ -799,6 +1047,9 @@ app.post("/api/auth/login-register", async (req: any, res) => {
   } else {
     // Usuário existente reconhecido: Restaurar perfil e atualizar streak sem double-login inflation
     const logTimestamp = new Date().toISOString();
+    if (req.idToken) {
+      await syncUserFromFirestore(user.id, req.idToken);
+    }
     updateAndCalculateUserStreak(user, dbData, logTimestamp);
     user.lastActive = logTimestamp;
     writeDB(dbData, req.idToken);
@@ -1227,7 +1478,7 @@ app.post("/api/upload", (req, res) => {
 });
 
 // Update User Profile route
-app.post("/api/users/update", (req: any, res) => {
+app.post("/api/users/update", async (req: any, res) => {
   const { 
     userId, name, displayName, avatar, city, division, organization, district, subDistrict, region,
     height, initialWeight, currentWeight, targetWeight, weightHistory, bodyMeasurements, progressPhotos,
@@ -1237,6 +1488,11 @@ app.post("/api/users/update", (req: any, res) => {
 
   if (!userId) {
     return res.status(400).json({ error: "ID de usuário é obrigatório." });
+  }
+
+  // Sincroniza dados mais recentes em nuvem do usuário antes de mesclar novas atualizações
+  if (req.idToken) {
+    await syncUserFromFirestore(userId, req.idToken);
   }
 
   const dbData = readDB();
@@ -1333,8 +1589,14 @@ app.post("/api/users/update", (req: any, res) => {
 });
 
 // Fetch full user contextual dashboard state
-app.get("/api/dashboard-stats/:userId", (req, res) => {
+app.get("/api/dashboard-stats/:userId", async (req: any, res) => {
   const { userId } = req.params;
+
+  // Sincroniza dados históricos reais do Firestore antes de retornar estatísticas
+  if (req.idToken) {
+    await syncUserFromFirestore(userId, req.idToken);
+  }
+
   const dbData = readDB();
 
   const user = dbData.users.find((u: any) => u.id === userId);
@@ -1345,7 +1607,7 @@ app.get("/api/dashboard-stats/:userId", (req, res) => {
   const oldStreak = user.streak || 0;
   updateAndCalculateUserStreak(user, dbData);
   if ((user.streak || 0) !== oldStreak) {
-    writeDB(dbData);
+    writeDB(dbData, req.idToken);
   }
 
   const userActivities = dbData.activities.filter((a: any) => a.userId === userId);
@@ -2622,7 +2884,7 @@ app.post("/api/notices/update", async (req: any, res: any) => {
 
   dbData.notices[index] = updatedNotice;
   writeDB(dbData);
-  persistDoc("notices", id, updatedNotice);
+  persistDoc("notices", id, updatedNotice, req.idToken, { isUpdate: true });
   res.json(updatedNotice);
 });
 
@@ -2682,7 +2944,7 @@ app.post("/api/notices/join", (req: any, res: any) => {
 
   dbData.notices[index] = notice;
   writeDB(dbData);
-  persistDoc("notices", id, notice);
+  persistDoc("notices", id, notice, req.idToken, { isUpdate: true });
   res.json(notice);
 });
 
@@ -2846,7 +3108,7 @@ app.post("/api/chats/:msgId/toggle-pin", (req, res) => {
 
   msg.isPinned = !msg.isPinned;
   writeDB(dbData);
-  persistDoc("chats", msgId, msg);
+  persistDoc("chats", msgId, msg, (req as any).idToken, { isUpdate: true });
   res.json(msg);
 });
 
@@ -2865,7 +3127,7 @@ app.post("/api/chats/:msgId/react", (req, res) => {
   msg.reactions[emoji] = (msg.reactions[emoji] || 0) + 1;
 
   writeDB(dbData);
-  persistDoc("chats", msgId, msg);
+  persistDoc("chats", msgId, msg, (req as any).idToken, { isUpdate: true });
   res.json(msg);
 });
 
@@ -2966,8 +3228,13 @@ app.get("/api/ai-incentive", async (req, res) => {
 });
 
 // REMINDERS & AGENDA REST ENDPOINTS
-app.get("/api/reminders", (req, res) => {
+app.get("/api/reminders", async (req: any, res) => {
   const { userId } = req.query;
+  
+  if (req.idToken && userId) {
+    await syncUserFromFirestore(userId as string, req.idToken);
+  }
+
   const dbData = readDB();
   if (!dbData.reminders) dbData.reminders = [];
   
@@ -2978,7 +3245,7 @@ app.get("/api/reminders", (req, res) => {
   res.json(dbData.reminders);
 });
 
-app.post("/api/reminders", (req, res) => {
+app.post("/api/reminders", (req: any, res) => {
   const { userId, title, date, category, description } = req.body;
   if (!userId || !title || !date || !category) {
     return res.status(400).json({ error: "Parâmetros obrigatórios ausentes (userId, title, date, category)." });
@@ -3014,13 +3281,13 @@ app.post("/api/reminders", (req, res) => {
   };
 
   dbData.reminders.push(newReminder);
-  writeDB(dbData);
-  persistDoc("reminders", newReminder.id, newReminder);
+  writeDB(dbData, req.idToken);
+  persistDoc("reminders", newReminder.id, newReminder, req.idToken);
 
   res.status(201).json(newReminder);
 });
 
-app.delete("/api/reminders/:id", (req, res) => {
+app.delete("/api/reminders/:id", (req: any, res) => {
   const { id } = req.params;
   const dbData = readDB();
   if (!dbData.reminders) dbData.reminders = [];
@@ -3031,8 +3298,8 @@ app.delete("/api/reminders/:id", (req, res) => {
   }
 
   dbData.reminders.splice(index, 1);
-  writeDB(dbData);
-  removeDoc("reminders", id);
+  writeDB(dbData, req.idToken);
+  removeDoc("reminders", id, req.idToken);
 
   res.json({ success: true, message: "Lembrete removido com sucesso." });
 });
@@ -3111,6 +3378,159 @@ app.get("/api/daimoku/active", async (req, res) => {
     console.error("Error fetching active practitioners:", err);
     res.json([]);
   }
+});
+
+// --- FEEDBACKS ENDPOINTS ---
+app.post("/api/feedbacks", async (req, res) => {
+  const { userId, message } = req.body;
+  if (!userId || !message) {
+    return res.status(400).json({ error: "userId e mensagem são obrigatórios." });
+  }
+
+  const dbData = readDB();
+  const user = dbData.users.find((u: any) => u.id === userId);
+  const userName = user ? (user.displayName || user.name) : "Usuário Anônimo";
+  const userEmail = user ? user.email : "";
+
+  const newFeedback = {
+    id: `fb-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    userId,
+    userName,
+    userEmail,
+    message: sanitizeInput(message),
+    timestamp: new Date().toISOString()
+  };
+
+  if (!dbData.feedbacks) dbData.feedbacks = [];
+  dbData.feedbacks.push(newFeedback);
+  
+  writeDB(dbData, (req as any).idToken);
+  res.json({ success: true, feedback: newFeedback });
+});
+
+app.get("/api/feedbacks", async (req, res) => {
+  const { userId } = req.query;
+  const dbData = readDB();
+  const user = dbData.users.find((u: any) => u.id === (userId as string));
+  
+  if (!user || !hasRole(user, "admin")) {
+    return res.status(403).json({ error: "Apenas administradores podem ler os feedbacks." });
+  }
+
+  res.json(dbData.feedbacks || []);
+});
+
+
+// --- LIVES ENDPOINTS ---
+app.get("/api/lives", async (req, res) => {
+  const dbData = readDB();
+  res.json(dbData.lives || []);
+});
+
+app.post("/api/lives", async (req, res) => {
+  const { userId, title, description, videoUrl } = req.body;
+  const dbData = readDB();
+  const user = dbData.users.find((u: any) => u.id === userId);
+
+  if (!user || !hasRole(user, "admin")) {
+    return res.status(403).json({ error: "Apenas administradores podem iniciar uma transmissão." });
+  }
+
+  if (!title || !videoUrl) {
+    return res.status(400).json({ error: "Título e URL do vídeo são obrigatórios." });
+  }
+
+  // Extract Youtube Video ID if it's a full URL
+  let parsedVideoUrl = videoUrl;
+  const ytMatch = videoUrl.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i);
+  if (ytMatch) {
+    parsedVideoUrl = ytMatch[1];
+  }
+
+  const newLive = {
+    id: `live-${Date.now()}`,
+    title: sanitizeInput(title),
+    description: sanitizeInput(description || ""),
+    videoUrl: parsedVideoUrl,
+    createdAt: new Date().toISOString(),
+    createdBy: userId,
+    likes: 0
+  };
+
+  dbData.lives = [newLive]; // Only allow one active live at a time
+  dbData.live_comments = []; // Reset live chat for the new session
+  
+  writeDB(dbData, (req as any).idToken);
+  res.json(newLive);
+});
+
+app.delete("/api/lives/:liveId", async (req, res) => {
+  const { liveId } = req.params;
+  const { userId } = req.query;
+
+  const dbData = readDB();
+  const user = dbData.users.find((u: any) => u.id === (userId as string));
+
+  if (!user || !hasRole(user, "admin")) {
+    return res.status(403).json({ error: "Apenas administradores podem encerrar transmissões." });
+  }
+
+  dbData.lives = (dbData.lives || []).filter((l: any) => l.id !== liveId);
+  dbData.live_comments = []; // Clean up comments
+  
+  writeDB(dbData, (req as any).idToken);
+  res.json({ success: true });
+});
+
+app.post("/api/lives/:liveId/react", async (req, res) => {
+  const { liveId } = req.params;
+  const dbData = readDB();
+  const live = (dbData.lives || []).find((l: any) => l.id === liveId);
+  if (live) {
+    live.likes = (live.likes || 0) + 1;
+    writeDB(dbData, (req as any).idToken);
+    return res.json({ success: true, likes: live.likes });
+  }
+  res.status(404).json({ error: "Transmissão não encontrada" });
+});
+
+app.get("/api/lives/:liveId/comments", async (req, res) => {
+  const { liveId } = req.params;
+  const dbData = readDB();
+  const comments = (dbData.live_comments || []).filter((c: any) => c.liveId === liveId);
+  res.json(comments);
+});
+
+app.post("/api/lives/:liveId/comments", async (req, res) => {
+  const { liveId } = req.params;
+  const { userId, content } = req.body;
+
+  if (!userId || !content) {
+    return res.status(400).json({ error: "userId e conteúdo são obrigatórios." });
+  }
+
+  const dbData = readDB();
+  const user = dbData.users.find((u: any) => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: "Usuário não encontrado." });
+  }
+
+  const newComment = {
+    id: `comm-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    liveId,
+    userId,
+    userName: user.displayName || user.name,
+    userAvatar: user.avatar,
+    content: sanitizeInput(content),
+    timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    badge: hasRole(user, "admin") ? "Staff" : undefined
+  };
+
+  if (!dbData.live_comments) dbData.live_comments = [];
+  dbData.live_comments.push(newComment);
+
+  writeDB(dbData, (req as any).idToken);
+  res.json(newComment);
 });
 
 // Serving web static frontend assets or implementing Vite dev server

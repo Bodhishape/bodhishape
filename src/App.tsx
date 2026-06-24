@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   MessageCircle,
   PlusCircle,
@@ -128,6 +128,8 @@ export default function App() {
   
   const [showDaimokuReturningModal, setShowDaimokuReturningModal] = useState<boolean>(false);
 
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
   // Play beautiful synthetic resonance gongs simulating traditional Buddhist bells
   const playTraditionalThreeBells = () => {
     try {
@@ -208,10 +210,39 @@ export default function App() {
     localStorage.setItem("daimoku_timer_seconds_remaining", daimokuTimerSecondsRemaining.toString());
   }, [daimokuTimerSecondsRemaining]);
 
-  // Voice synthesis disabled until actual audio files arrive (Requisite 1.4)
+  // Persistent real audio playback loop with volume control
   useEffect(() => {
-    // Left empty prepared for real audio files
-  }, [daimokuTimerIsRunning, daimokuTimerAudioType, daimokuVolume]);
+    // If there is an existing audio instance playing, pause and clean it up
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+
+    if (daimokuTimerIsRunning && daimokuTimerAudioType !== "none") {
+      const audioUrl = `/audio/daimoku_${daimokuTimerAudioType}.mp3`;
+      const audio = new Audio(audioUrl);
+      audio.loop = true;
+      audio.volume = daimokuVolume / 100;
+      audioRef.current = audio;
+
+      audio.play().catch((err) => {
+        console.warn("Audio playback blocked by browser or file is not uploaded yet:", err);
+      });
+    }
+
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+    };
+  }, [daimokuTimerIsRunning, daimokuTimerAudioType]);
+
+  // Handle dynamic real-time volume adjustments while audio is playing
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = daimokuVolume / 100;
+    }
+  }, [daimokuVolume]);
 
   // Sync countdown tick and capture session endings
   useEffect(() => {
@@ -3961,13 +3992,31 @@ export default function App() {
                       className="w-full bg-slate-950 text-xs border border-slate-800 rounded-lg p-2.5 text-white placeholder-slate-650"
                     />
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         if (!helpFeedbackText.trim()) {
                           setHelpFeedbackMsg("Escreva alguma mensagem antes de enviar.");
                           return;
                         }
-                        setHelpFeedbackMsg("Mensagem enviada! Muito obrigado por contribuir para o desenvolvimento do BodhiShape. ✨");
-                        setHelpFeedbackText("");
+                        try {
+                          setHelpFeedbackMsg("Enviando...");
+                          const res = await fetch("/api/feedbacks", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              userId: currentUser?.id,
+                              message: helpFeedbackText
+                            })
+                          });
+                          if (res.ok) {
+                            setHelpFeedbackMsg("Mensagem enviada! Muito obrigado por contribuir para o desenvolvimento do BodhiShape. ✨");
+                            setHelpFeedbackText("");
+                          } else {
+                            setHelpFeedbackMsg("Erro ao enviar mensagem. Tente novamente.");
+                          }
+                        } catch (err) {
+                          console.error("Error sending feedback:", err);
+                          setHelpFeedbackMsg("Erro ao conectar com o servidor.");
+                        }
                       }}
                       className="bg-indigo-650 hover:bg-indigo-600 text-white text-[10px] font-black p-2.5 px-5 rounded-lg cursor-pointer transition"
                     >

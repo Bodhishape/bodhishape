@@ -146,6 +146,12 @@ export default function PrivateEvolution({
   const [currentWeight, setCurrentWeight] = useState<number>(currentUser?.currentWeight || 0);
   const [targetWeight, setTargetWeight] = useState<number>(currentUser?.targetWeight || 0);
 
+  // String representations of physical values to allow typing commas and decimal points smoothly
+  const [heightInput, setHeightInput] = useState<string>((currentUser?.height || "").toString().replace(".", ","));
+  const [initialWeightInput, setInitialWeightInput] = useState<string>((currentUser?.initialWeight || "").toString().replace(".", ","));
+  const [currentWeightInput, setCurrentWeightInput] = useState<string>((currentUser?.currentWeight || "").toString().replace(".", ","));
+  const [targetWeightInput, setTargetWeightInput] = useState<string>((currentUser?.targetWeight || "").toString().replace(".", ","));
+
   // Body Measurements form fields
   const [peitoral, setPeitoral] = useState<number>(currentUser?.bodyMeasurements?.peitoral || 0);
   const [cintura, setCintura] = useState<number>(currentUser?.bodyMeasurements?.cintura || 0);
@@ -180,6 +186,11 @@ export default function PrivateEvolution({
       setInitialWeight(currentUser.initialWeight || 0);
       setCurrentWeight(currentUser.currentWeight || 0);
       setTargetWeight(currentUser.targetWeight || 0);
+
+      setHeightInput((currentUser.height || "").toString().replace(".", ","));
+      setInitialWeightInput((currentUser.initialWeight || "").toString().replace(".", ","));
+      setCurrentWeightInput((currentUser.currentWeight || "").toString().replace(".", ","));
+      setTargetWeightInput((currentUser.targetWeight || "").toString().replace(".", ","));
 
       const m = currentUser.bodyMeasurements || {};
       setPeitoral(m.peitoral || 0);
@@ -235,6 +246,18 @@ export default function PrivateEvolution({
     e.preventDefault();
     if (!currentUser) return;
 
+    // Helper to parse strings containing either commas or dots safely
+    const parseNumberSafe = (val: string): number => {
+      if (!val) return 0;
+      const parsed = parseFloat(val.replace(/\s/g, "").replace(",", "."));
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
+    const parsedHeight = parseNumberSafe(heightInput);
+    const parsedInitialWeight = parseNumberSafe(initialWeightInput);
+    const parsedCurrentWeight = parseNumberSafe(currentWeightInput);
+    const parsedTargetWeight = parseNumberSafe(targetWeightInput);
+
     // Build or update history
     const history = currentUser.weightHistory ? [...currentUser.weightHistory] : [];
     const todayStr = new Date().toISOString().split("T")[0];
@@ -242,19 +265,19 @@ export default function PrivateEvolution({
     // Check if we already have weight for today
     const exists = history.findIndex(h => h.date === todayStr);
     if (exists !== -1) {
-      history[exists].weight = Number(currentWeight);
+      history[exists].weight = parsedCurrentWeight;
     } else {
-      history.push({ date: todayStr, weight: Number(currentWeight) });
+      history.push({ date: todayStr, weight: parsedCurrentWeight });
     }
 
     // Keep sorted sortedWeightHistory
     history.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     const success = await updateStoreProfile({
-      height: Number(height),
-      initialWeight: Number(initialWeight),
-      currentWeight: Number(currentWeight),
-      targetWeight: Number(targetWeight),
+      height: parsedHeight,
+      initialWeight: parsedInitialWeight,
+      currentWeight: parsedCurrentWeight,
+      targetWeight: parsedTargetWeight,
       weightHistory: history
     });
 
@@ -696,8 +719,8 @@ export default function PrivateEvolution({
       
       {/* Toast floating notifications system */}
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 bg-slate-900 border border-indigo-500 text-indigo-300 px-4 py-3 rounded-xl shadow-2xl text-xs font-bold font-heading flex items-center gap-2 animate-bounce">
-          <span>✨</span>
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[9999] bg-slate-950/95 border-2 border-emerald-500 text-emerald-400 px-5 py-3.5 rounded-2xl shadow-[0_0_30px_rgba(16,185,129,0.3)] text-xs font-black font-heading flex items-center gap-3 animate-pulse">
+          <span className="text-sm">✨</span>
           <span>{toastMessage}</span>
         </div>
       )}
@@ -1364,10 +1387,10 @@ export default function PrivateEvolution({
                     <div className="space-y-1.5">
                       <label className="text-[9px] font-black uppercase tracking-wider text-indigo-300 block">Altura (cm)</label>
                       <input 
-                        type="number"
-                        placeholder="Ex: 175"
-                        value={height || ""}
-                        onChange={(e) => setHeight(Number(e.target.value))}
+                        type="text"
+                        placeholder="Ex: 171"
+                        value={heightInput}
+                        onChange={(e) => setHeightInput(e.target.value)}
                         className="w-full text-xs font-mono font-bold bg-[#03010b] border border-slate-800 rounded-xl px-3 py-2.5 outline-none focus:border-indigo-550 transition-colors"
                       />
                     </div>
@@ -1375,11 +1398,10 @@ export default function PrivateEvolution({
                     <div className="space-y-1.5">
                       <label className="text-[9px] font-black uppercase tracking-wider text-indigo-300 block">Peso Inicial (kg)</label>
                       <input 
-                        type="number"
-                        step="0.1"
-                        placeholder="Ex: 85.5"
-                        value={initialWeight || ""}
-                        onChange={(e) => setInitialWeight(Number(e.target.value))}
+                        type="text"
+                        placeholder="Ex: 67,25"
+                        value={initialWeightInput}
+                        onChange={(e) => setInitialWeightInput(e.target.value)}
                         className="w-full text-xs font-mono font-bold bg-[#03010b] border border-slate-800 rounded-xl px-3 py-2.5 outline-none focus:border-indigo-550 transition-colors"
                       />
                     </div>
@@ -1387,11 +1409,10 @@ export default function PrivateEvolution({
                     <div className="space-y-1.5">
                       <label className="text-[9px] font-black uppercase tracking-wider text-indigo-300 block">Peso Atual (kg)</label>
                       <input 
-                        type="number"
-                        step="0.1"
-                        placeholder="Ex: 79.2"
-                        value={currentWeight || ""}
-                        onChange={(e) => setCurrentWeight(Number(e.target.value))}
+                        type="text"
+                        placeholder="Ex: 67,25"
+                        value={currentWeightInput}
+                        onChange={(e) => setCurrentWeightInput(e.target.value)}
                         className="w-full text-xs font-mono font-bold bg-[#03010b] border border-slate-800 rounded-xl px-3 py-2.5 outline-none focus:border-indigo-550 transition-colors"
                       />
                     </div>
@@ -1399,11 +1420,10 @@ export default function PrivateEvolution({
                     <div className="space-y-1.5">
                       <label className="text-[9px] font-black uppercase tracking-wider text-indigo-300 block">Peso Objetivo (kg)</label>
                       <input 
-                        type="number"
-                        step="0.1"
-                        placeholder="Ex: 75.0"
-                        value={targetWeight || ""}
-                        onChange={(e) => setTargetWeight(Number(e.target.value))}
+                        type="text"
+                        placeholder="Ex: 65,0"
+                        value={targetWeightInput}
+                        onChange={(e) => setTargetWeightInput(e.target.value)}
                         className="w-full text-xs font-mono font-bold bg-[#03010b] border border-slate-800 rounded-xl px-3 py-2.5 outline-none focus:border-indigo-550 transition-colors"
                       />
                     </div>
