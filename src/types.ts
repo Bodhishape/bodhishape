@@ -70,6 +70,14 @@ export interface User {
   pushEnabled?: boolean;
   pushToken?: string;
   birthdate?: string;
+  integrations?: {
+    [service: string]: {
+      accessToken?: string;
+      refreshToken?: string;
+      expiresAt?: number;
+      connectedAt?: string;
+    };
+  };
 }
 
 export type ExerciseCategory =

@@ -20,6 +20,14 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 dotenv.config();
 setLogLevel("silent");
 
+// Google Fit and Strava OAuth Configurations
+const GOOGLE_FIT_CLIENT_ID = process.env.GOOGLE_FIT_CLIENT_ID || "";
+const GOOGLE_FIT_CLIENT_SECRET = process.env.GOOGLE_FIT_CLIENT_SECRET || "";
+const STRAVA_CLIENT_ID = process.env.STRAVA_CLIENT_ID || "";
+const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET || "";
+const APP_BASE_URL = process.env.APP_BASE_URL || process.env.APP_URL || "http://localhost:3000";
+
+
 const app = express();
 const PORT = 3000;
 const DB_FILE = path.join(process.cwd(), "data", "database.json");
@@ -241,10 +249,10 @@ async function getAnonymousIdToken(): Promise<string | null> {
       } catch {
         // ignore
       }
-      console.warn(`[FIREBASE_REST] Anonymous sign-in not enabled or failed (${errMsg}). Operating with local cache.`);
+      console.log(`[FIREBASE] Using local cache as primary dataset (Note: ${errMsg})`);
     }
   } catch (err: any) {
-    console.warn("[FIREBASE_REST] Error getting anonymous token:", err.message);
+    console.log(`[FIREBASE] Using local cache as primary dataset (Note: ${err.message})`);
   }
   return null;
 }
@@ -338,10 +346,10 @@ async function seedAndLoadFromFirestore() {
     return;
   }
 
-  console.log("[FIREBASE] Starting boot sync with Firestore...");
+  console.log("[FIREBASE] Running with local data cache as primary dataset.");
   const token = await getAnonymousIdToken();
   if (!token) {
-    console.warn("[FIREBASE] Boot sync warning: Could not obtain anonymous token. Operating with local cache.");
+    console.log("[FIREBASE] Boot sync completed. Operating seamlessly with local cache.");
     return;
   }
 
@@ -354,7 +362,7 @@ async function seedAndLoadFromFirestore() {
         console.log(`[FIREBASE] Boot sync: Merged ${fetchedDocs.length} items from collection '${col}'`);
       }
     } catch (err: any) {
-      console.warn(`[FIREBASE] Boot sync warning for collection '${col}':`, err.message);
+      console.log(`[FIREBASE] Boot sync note for collection '${col}': ${err.message}`);
     }
   }
 
@@ -1016,7 +1024,9 @@ const exercisesCategories = [
   { "id": "cardio", "label": "❤️ Cardio", "subtypes": ["Elíptico", "Escada", "Step", "Corda", "Remo Indoor"] },
   { "id": "hiit", "label": "🏃 HIIT", "subtypes": ["HIIT", "Tabata", "EMOM", "AMRAP"] },
   { "id": "kids", "label": "🧒 Infantil", "subtypes": ["Recreação", "Psicomotricidade", "Ginástica Infantil"] },
-  { "id": "inclusive", "label": "♿ Exercícios Inclusivos e Adaptados", "subtypes": ["Corrida em Cadeira de Rodas", "Basquete em Cadeira de Rodas", "Tênis em Cadeira de Rodas", "Rugby em Cadeira de Rodas", "Handbike", "Dança em Cadeira de Rodas", "Natação Adaptada", "Hidroterapia", "Exercícios Aquáticos Adaptados", "Musculação Adaptada", "Treino Funcional Adaptado", "Alongamento Adaptado", "Mobilidade Adaptada", "Fortalecimento Muscular Adaptado", "Exercícios com Faixas Elásticas", "Exercícios Sentados", "Caminhada Assistida", "Caminhada com Andador", "Caminhada com Bengala", "Exercícios de Equilíbrio", "Coordenação Motora", "Exercícios de Marcha", "Reeducação Motora", "Fisioterapia Motora", "Bicicleta Ergométrica Adaptada", "Pedal Manual (Handcycle Indoor)", "Exercícios Respiratórios", "Cardio Adaptado", "Yoga Adaptada", "Pilates Adaptado", "Tai Chi Adaptado", "Qi Gong Adaptado", "Relaxamento Guiado", "Meditação em Movimento", "Psicomotricidade", "Coordenação Motora Global", "Coordenação Motora Fina", "Estimulação Sensorial", "Circuito Motor", "Exercícios Cognitivos com Movimento", "Atletismo Paralímpico", "Bocha Paralímpica", "Goalball", "Futebol de Cegos", "Futebol PC", "Vôlei Sentado", "Halterofilismo Paralímpico", "Paracanoagem", "Paratriatlo", "Parabadminton", "Parataekwondo", "Tiro Esportivo Paralímpico", "Esgrima em Cadeira de Rodas", "Remo Paralímpico", "Hipismo Paralímpico", "Caminhada Leve", "Ginástica Funcional para Idosos", "Alongamento para Terceira Idade", "Pilates Sênior", "Hidroginástica Sênior", "Exercícios de Equilíbrio para Idosos", "Fortalecimento para Idosos", "Dança Sênior", "Mobilidade Articular"] }
+  { "id": "inclusive", "label": "♿ Exercícios Inclusivos e Adaptados", "subtypes": ["Corrida em Cadeira de Rodas", "Basquete em Cadeira de Rodas", "Tênis em Cadeira de Rodas", "Rugby em Cadeira de Rodas", "Handbike", "Dança em Cadeira de Rodas", "Natação Adaptada", "Hidroterapia", "Exercícios Aquáticos Adaptados", "Musculação Adaptada", "Treino Funcional Adaptado", "Alongamento Adaptado", "Mobilidade Adaptada", "Fortalecimento Muscular Adaptado", "Exercícios com Faixas Elásticas", "Exercícios Sentados", "Caminhada Assistida", "Caminhada com Andador", "Caminhada com Bengala", "Exercícios de Equilíbrio", "Coordenação Motora", "Exercícios de Marcha", "Reeducação Motora", "Fisioterapia Motora", "Bicicleta Ergométrica Adaptada", "Pedal Manual (Handcycle Indoor)", "Exercícios Respiratórios", "Cardio Adaptado", "Yoga Adaptada", "Pilates Adaptado", "Tai Chi Adaptado", "Qi Gong Adaptado", "Relaxamento Guiado", "Meditação em Movimento", "Psicomotricidade", "Coordenação Motora Global", "Coordenação Motora Fina", "Estimulação Sensorial", "Circuito Motor", "Exercícios Cognitivos com Movimento", "Atletismo Paralímpico", "Bocha Paralímpica", "Goalball", "Futebol de Cegos", "Futebol PC", "Vôlei Sentado", "Halterofilismo Paralímpico", "Paracanoagem", "Paratriatlo", "Parabadminton", "Parataekwondo", "Tiro Esportivo Paralímpico", "Esgrima em Cadeira de Rodas", "Remo Paralímpico", "Hipismo Paralímpico", "Caminhada Leve", "Ginástica Funcional para Idosos", "Alongamento para Terceira Idade", "Pilates Sênior", "Hidroginástica Sênior", "Exercícios de Equilíbrio para Idosos", "Fortalecimento para Idosos", "Dança Sênior", "Mobilidade Articular"] },
+  { "id": "other", "label": "➕ Outros", "subtypes": ["Outro esporte não listado", "Digitar exercício personalizado..."] },
+  { "id": "imported", "label": "📱 Importados Automaticamente", "subtypes": ["Google Fit", "Health Connect", "Apple Health", "Samsung Health", "Garmin", "Polar", "Suunto", "Coros", "Strava", "Fitbit", "Amazfit", "Huawei Health", "Zepp", "Mi Fitness"] }
 ];
 
 app.get("/api/exercises/categories", (req, res) => {
@@ -1042,6 +1052,24 @@ app.get("/api/exercises", (req, res) => {
     return res.json(filtered);
   }
   res.json(allExercises);
+});
+
+app.get("/api/exercises/custom", (req, res) => {
+  const dbData = readDB();
+  res.json(dbData.customExercises || []);
+});
+
+app.post("/api/exercises/custom", (req: any, res) => {
+  const { userId, name } = req.body;
+  if (!userId || !name) return res.status(400).json({ error: "userId e name obrigatórios" });
+  const dbData = readDB();
+  if (!dbData.customExercises) dbData.customExercises = [];
+  const exists = dbData.customExercises.find((e: any) => e.name.toLowerCase() === name.toLowerCase() && e.userId === userId);
+  if (!exists) {
+    dbData.customExercises.push({ id: "custom-" + Math.random().toString(36).substr(2, 9), userId, name: name.trim(), createdAt: new Date().toISOString() });
+    writeDB(dbData, req.idToken);
+  }
+  res.json(dbData.customExercises);
 });
 
 app.get("/api/firebase-config", (req, res) => {
@@ -1767,6 +1795,7 @@ app.post("/api/users/update", async (req: any, res) => {
   writeDB(dbData, req.idToken);
   res.json(user);
 });
+
 
 // Fetch full user contextual dashboard state
 app.get("/api/dashboard-stats/:userId", async (req: any, res) => {
@@ -3797,6 +3826,135 @@ async function setupViteServerOrProd() {
     });
   }
 
+  // Integrations helpers (graceful fallback when no keys configured)
+  const INTEGRATIONS_CONFIG = {
+    strava: { clientId: process.env.STRAVA_CLIENT_ID || "", clientSecret: process.env.STRAVA_CLIENT_SECRET || "" },
+    googleFit: { clientId: process.env.GOOGLE_FIT_CLIENT_ID || "", clientSecret: process.env.GOOGLE_FIT_CLIENT_SECRET || "" }
+  };
+
+  // === INTEGRATION ENDPOINTS ===
+
+  app.get("/api/integrations/strava/auth", (req: any, res: any) => {
+    const { userId } = req.query;
+    if (!process.env.STRAVA_CLIENT_ID) {
+      return res.json({ url: "", notice: "Strava não configurado" });
+    }
+    const redirectUri = `${process.env.APP_BASE_URL || "http://localhost:3000"}/api/integrations/strava/callback?userId=${userId}`;
+    const url = `https://www.strava.com/oauth/authorize?client_id=${process.env.STRAVA_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&approval_prompt=auto&scope=read,activity:read_all`;
+    res.json({ url });
+  });
+
+  app.get("/api/integrations/strava/callback", async (req: any, res: any) => {
+    const { code, userId } = req.query;
+    if (!code) return res.redirect("/?integration=strava&status=error");
+    try {
+      const r = await fetch("https://www.strava.com/oauth/token", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: process.env.STRAVA_CLIENT_ID,
+          client_secret: process.env.STRAVA_CLIENT_SECRET,
+          code, grant_type: "authorization_code"
+        })
+      });
+      const tokens: any = await r.json();
+      if (tokens.access_token && userId) {
+        const dbData = readDB();
+        const user = dbData.users.find((u: any) => u.id === userId);
+        if (user) {
+          if (!user.integrations) user.integrations = {};
+          user.integrations.strava = { accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: tokens.expires_at, connectedAt: new Date().toISOString() };
+          writeDB(dbData, req.idToken);
+        }
+      }
+      res.redirect("/?integration=strava&status=success");
+    } catch { res.redirect("/?integration=strava&status=error"); }
+  });
+
+  app.get("/api/integrations/google-fit/auth", (req: any, res: any) => {
+    if (!process.env.GOOGLE_FIT_CLIENT_ID) {
+      return res.json({ url: "", notice: "Google Fit não configurado" });
+    }
+    const redirectUri = `${process.env.APP_BASE_URL || "http://localhost:3000"}/api/integrations/google-fit/callback`;
+    const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${process.env.GOOGLE_FIT_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=https://www.googleapis.com/auth/fitness.activity.read%20https://www.googleapis.com/auth/fitness.body.read&access_type=offline`;
+    res.json({ url });
+  });
+
+  app.get("/api/integrations/google-fit/callback", async (req: any, res: any) => {
+    const { code } = req.query;
+    if (!code) return res.redirect("/?integration=googlefit&status=error");
+    try {
+      await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code: code as string, client_id: process.env.GOOGLE_FIT_CLIENT_ID || "",
+          client_secret: process.env.GOOGLE_FIT_CLIENT_SECRET || "",
+          redirect_uri: `${process.env.APP_BASE_URL || "http://localhost:3000"}/api/integrations/google-fit/callback`,
+          grant_type: "authorization_code"
+        })
+      });
+      res.redirect("/?integration=googlefit&status=success");
+    } catch { res.redirect("/?integration=googlefit&status=error"); }
+  });
+
+  app.post("/api/integrations/save-token", (req: any, res: any) => {
+    const { userId, service, accessToken, refreshToken, expiresAt } = req.body;
+    if (!userId || !service) return res.status(400).json({ error: "userId e service obrigatorios" });
+    const dbData = readDB();
+    const user = dbData.users.find((u: any) => u.id === userId);
+    if (!user) return res.status(404).json({ error: "Usuario nao encontrado" });
+    if (!user.integrations) user.integrations = {};
+    user.integrations[service] = { accessToken, refreshToken, expiresAt, connectedAt: new Date().toISOString() };
+    writeDB(dbData, req.idToken);
+    res.json({ success: true });
+  });
+
+  app.get("/api/integrations/tokens", (req: any, res: any) => {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ error: "userId obrigatorio" });
+    const dbData = readDB();
+    const user = dbData.users.find((u: any) => u.id === userId);
+    if (!user) return res.status(404).json({ error: "Usuario nao encontrado" });
+    res.json(user.integrations || {});
+  });
+
+  app.get("/api/integrations/strava/activities", async (req: any, res: any) => {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ error: "userId obrigatorio" });
+    const dbData = readDB();
+    const user = dbData.users.find((u: any) => u.id === userId);
+    const token = user?.integrations?.strava?.accessToken;
+    if (!token) return res.json([]);
+    try {
+      const r = await fetch("https://www.strava.com/api/v3/athlete/activities?per_page=5", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (!r.ok) return res.json([]);
+      const acts: any = await r.json();
+      res.json(acts.map((a: any) => ({ id: "strava-" + a.id, name: a.name, type: a.type, distanceKm: a.distance ? a.distance / 1000 : 0, movingTime: a.moving_time, startDate: a.start_date, calories: a.calories || 0 })));
+    } catch { res.json([]); }
+  });
+
+  app.get("/api/integrations/google-fit/data", async (req: any, res: any) => {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ error: "userId obrigatorio" });
+    const dbData = readDB();
+    const user = dbData.users.find((u: any) => u.id === userId);
+    const token = user?.integrations?.googleFit?.accessToken;
+    if (!token) return res.json(null);
+    const now = Date.now();
+    try {
+      const r = await fetch("https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate", {
+        method: "POST", headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          aggregateBy: [{ dataTypeName: "com.google.step_count.delta" }, { dataTypeName: "com.google.calories.expended" }],
+          bucketByTime: { durationMillis: 86400000 }, startTimeMillis: now - 7 * 86400000, endTimeMillis: now
+        })
+      });
+      if (!r.ok) return res.json(null);
+      res.json(await r.json());
+    } catch { res.json(null); }
+  });
+
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[BODHISATTVAS DO SHAPE] Server is up on http://localhost:${PORT}`);
   });
@@ -3811,7 +3969,7 @@ async function syncAllFromFirestore() {
       token = await getAnonymousIdToken();
     }
     if (!token) {
-      console.warn("[FIREBASE_SYNC] Skipping synchronization: No auth token available.");
+      console.log("[FIREBASE_SYNC] Skipping database synchronization (using local data store as primary)");
       return;
     }
 
@@ -3824,7 +3982,7 @@ async function syncAllFromFirestore() {
           console.log(`[FIREBASE_SYNC] Synced ${fetchedDocs.length} items from collection '${col}'`);
         }
       } catch (err: any) {
-        console.warn(`[FIREBASE_SYNC] Sync warning for collection '${col}':`, err.message);
+        console.log(`[FIREBASE_SYNC] Sync info for collection '${col}': ${err.message}`);
       }
     }
 

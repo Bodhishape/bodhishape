@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { 
   Sunrise, Sunset, Flame, Dumbbell, Play, Plus, Smartphone, Zap, Check, 
   AlertTriangle, ArrowRight, Star, Calendar, Clock, MapPin, Heart, HelpCircle
@@ -91,6 +91,7 @@ export default function ActivityLogger({
 
   // Retroactive activity tracking state
   const [isRetroactive, setIsRetroactive] = useState<boolean>(false);
+  const [extraMetrics, setExtraMetrics] = useState({ distanceKm: "", calories: "", steps: "", heartRateAvg: "", heartRateMax: "", pace: "", weightUsed: "", sets: "", reps: "", sourceApp: "Manual" });
   const [retroactiveDate, setRetroactiveDate] = useState<string>(() => new Date().toISOString().split("T")[0]);
   const [startTime, setStartTime] = useState<string>("19:00");
   const [endTime, setEndTime] = useState<string>("19:30");
@@ -128,58 +129,118 @@ export default function ActivityLogger({
     return () => clearInterval(interval);
   }, []);
 
-  // Setup visual categories listing matching the Comprehensive Exercise Library blueprint
-  const [exerciseLibrary, setExerciseLibrary] = useState<VisualCategory[]>([
-    { id: "strength", label: "🏋️ Musculação e Força", backendCategory: "Musculação", subtypes: ["Musculação Tradicional", "Hipertrofia", "Força", "Powerlifting", "Levantamento Olímpico", "Treino Funcional", "Cross Training", "CrossFit", "Calistenia", "Street Workout", "Treino em Circuito", "Treino Militar", "Treino em Casa"] },
-    { id: "running", label: "🏃 Corrida e Caminhada", backendCategory: "Corrida", subtypes: ["Caminhada", "Caminhada Rápida", "Corrida Leve", "Corrida de Rua", "Corrida em Esteira", "Trail Running", "Corrida de Montanha", "Sprint", "Cooper", "HIIT Corrida"] },
-    { id: "cycling", label: "🚴 Ciclismo", backendCategory: "Ciclismo", subtypes: ["Bicicleta Urbana", "Mountain Bike", "Speed", "Gravel", "BMX", "Ciclismo Indoor (Spinning)", "Ciclismo de Estrada"] },
-    { id: "swimming", label: "🏊 Natação", backendCategory: "Aquáticos", subtypes: ["Natação Livre", "Costas", "Peito", "Borboleta", "Crawl", "Hidroginástica", "Águas Abertas"] },
-    { id: "martial-arts", label: "🥋 Artes Marciais", backendCategory: "Artes Marciais", subtypes: ["Judô", "Karatê", "Jiu-Jitsu", "Muay Thai", "Boxe", "Kickboxing", "Taekwondo", "Kung Fu", "Capoeira", "Krav Maga", "MMA", "Wrestling"] },
-    { id: "team-sports", label: "⚽ Esportes Coletivos", backendCategory: "Esportes", subtypes: ["Futebol", "Futsal", "Society", "Basquete", "Vôlei", "Handebol", "Rugby", "Beisebol", "Softbol", "Hóquei", "Futebol Americano"] },
-    { id: "individual-sports", label: "🎾 Esportes Individuais", backendCategory: "Esportes", subtypes: ["Tênis", "Beach Tennis", "Tênis de Mesa", "Badminton", "Squash", "Golfe", "Boliche", "Tiro com Arco"] },
-    { id: "mind-body", label: "🧘 Corpo e Mente", backendCategory: "Bem-estar", subtypes: ["Yoga", "Pilates", "Alongamento", "Meditação Ativa", "Tai Chi Chuan", "Qi Gong"] },
-    { id: "dance", label: "💃 Dança", backendCategory: "Dança", subtypes: ["Zumba", "FitDance", "Dança de Salão", "Ballet", "Jazz", "Hip Hop", "Forró", "Samba", "Dança Contemporânea", "K-pop Dance"] },
-    { id: "outdoor", label: "🏔️ Outdoor", backendCategory: "Outro", subtypes: ["Escalada", "Rapel", "Trekking", "Hiking", "Montanhismo", "Canoagem", "Caiaque", "Stand Up Paddle", "Surfe", "Windsurf", "Kitesurf", "Remo"] },
-    { id: "winter", label: "❄️ Esportes de Inverno", backendCategory: "Outro", subtypes: ["Esqui", "Snowboard", "Patinação no Gelo"] },
-    { id: "wheels", label: "🛼 Rodas", backendCategory: "Outro", subtypes: ["Skate", "Longboard", "Patins", "Patinete"] },
-    { id: "cardio", label: "❤️ Cardio", backendCategory: "Outro", subtypes: ["Elíptico", "Escada", "Step", "Corda", "Remo Indoor"] },
-    { id: "hiit", label: "🏃 HIIT", backendCategory: "Outro", subtypes: ["HIIT", "Tabata", "EMOM", "AMRAP"] },
-    { id: "kids", label: "🧒 Infantil", backendCategory: "Outro", subtypes: ["Recreação", "Psicomotricidade", "Ginástica Infantil"] },
-    { id: "inclusive", label: "♿ Exercícios Inclusivos e Adaptados", backendCategory: "Outro", subtypes: ["Corrida em Cadeira de Rodas", "Basquete em Cadeira de Rodas", "Tênis em Cadeira de Rodas", "Rugby em Cadeira de Rodas", "Handbike", "Dança em Cadeira de Rodas", "Natação Adaptada", "Hidroterapia", "Musculação Adaptada", "Treino Funcional Adaptado", "Alongamento Adaptado", "Mobilidade Adaptada", "Fortalecimento Muscular Adaptado", "Exercícios com Faixas Elásticas", "Exercícios Sentados", "Caminhada Assistida", "Caminhada com Andador", "Caminhada com Bengala", "Exercícios de Equilíbrio", "Coordenação Motora", "Fisioterapia Motora", "Bicicleta Ergométrica Adaptada", "Pedal Manual (Handcycle Indoor)", "Exercícios Respiratórios", "Cardio Adaptado", "Yoga Adaptada", "Pilates Adaptado", "Tai Chi Adaptado", "Relaxamento Guiado", "Meditação em Movimento", "Psicomotricidade", "Coordenação Motora Global", "Coordenação Motora Fina", "Estimulação Sensorial", "Circuito Motor", "Atletismo Paralímpico", "Bocha Paralímpica", "Goalball", "Futebol de Cegos", "Vôlei Sentado", "Halterofilismo Paralímpico", "Paracanoagem", "Paratriatlo", "Parabadminton", "Parataekwondo", "Esgrima em Cadeira de Rodas", "Remo Paralímpico", "Hipismo Paralímpico", "Caminhada Leve", "Ginástica Funcional para Idosos", "Pilates Sênior", "Hidroginástica", "Dança Sênior", "Mobilidade Articular"] },
-    { id: "imported", label: "📱 Importados Automaticamente", backendCategory: "Outro", subtypes: ["Google Fit", "Health Connect", "Apple Health", "Samsung Health", "Garmin", "Polar", "Suunto", "Coros", "Strava", "Fitbit", "Amazfit", "Huawei Health", "Zepp", "Mi Fitness"] }
-  ]);
+  const [exerciseCategories, setExerciseCategories] = useState<any[]>([]);
+  const [loadingExercises, setLoadingExercises] = useState(true);
+  const [customExercises, setCustomExercises] = useState<any[]>([]);
+  const [customExerciseInput, setCustomExerciseInput] = useState("");
+
+  const fetchCustomExercises = async () => {
+    try {
+      const res = await fetch("/api/exercises/custom");
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setCustomExercises(data);
+        }
+      }
+    } catch (err) {
+      console.error("Error loading custom exercises:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchCustomExercises();
+  }, []);
 
   useEffect(() => {
     fetch("/api/exercises/categories")
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          const mapped = data.map((cat: any) => {
-            let backendCategory: ExerciseCategory = "Outro";
-            if (cat.id === "strength") backendCategory = "Musculação";
-            else if (cat.id === "running") backendCategory = "Corrida";
-            else if (cat.id === "cycling") backendCategory = "Ciclismo";
-            else if (cat.id === "swimming") backendCategory = "Aquáticos";
-            else if (cat.id === "martial-arts") backendCategory = "Artes Marciais";
-            else if (cat.id === "team-sports" || cat.id === "individual-sports") backendCategory = "Esportes";
-            else if (cat.id === "mind-body") backendCategory = "Bem-estar";
-            else if (cat.id === "dance") backendCategory = "Dança";
-            return {
-              id: cat.id,
-              label: cat.label,
-              backendCategory,
-              subtypes: cat.subtypes
-            };
-          });
-          setExerciseLibrary(mapped);
-        }
+      .then(r => r.json())
+      .then(d => {
+        setExerciseCategories(d);
+        setLoadingExercises(false);
       })
-      .catch(err => console.error("Error loading categories", err));
+      .catch(() => setLoadingExercises(false));
   }, []);
+
+  // Compute exerciseLibrary dynamically from exerciseCategories and customExercises!
+  const exerciseLibrary = useMemo<VisualCategory[]>(() => {
+    const list = Array.isArray(exerciseCategories) && exerciseCategories.length > 0 ? exerciseCategories : [
+      { id: "strength", label: "🏋️ Musculação e Força", subtypes: ["Musculação Tradicional", "Hipertrofia", "Força", "Powerlifting", "Levantamento Olímpico", "Treino Funcional", "Cross Training", "CrossFit", "Calistenia", "Street Workout", "Treino em Circuito", "Treino Militar", "Treino em Casa"] },
+      { id: "running", label: "🏃 Corrida e Caminhada", subtypes: ["Caminhada", "Caminhada Rápida", "Corrida Leve", "Corrida de Rua", "Corrida em Esteira", "Trail Running", "Corrida de Montanha", "Sprint", "Cooper", "HIIT Corrida"] },
+      { id: "cycling", label: "🚴 Ciclismo", subtypes: ["Bicicleta Urbana", "Mountain Bike", "Speed", "Gravel", "BMX", "Ciclismo Indoor (Spinning)", "Ciclismo de Estrada"] },
+      { id: "swimming", label: "🏊 Natação", subtypes: ["Natação Livre", "Costas", "Peito", "Borboleta", "Crawl", "Hidroginástica", "Águas Abertas"] },
+      { id: "martial-arts", label: "🥋 Artes Marciais", subtypes: ["Judô", "Karatê", "Jiu-Jitsu", "Muay Thai", "Boxe", "Kickboxing", "Taekwondo", "Kung Fu", "Capoeira", "Krav Maga", "MMA", "Wrestling"] },
+      { id: "team-sports", label: "⚽ Esportes Coletivos", subtypes: ["Futebol", "Futsal", "Society", "Basquete", "Vôlei", "Handebol", "Rugby", "Beisebol", "Softbol", "Hóquei", "Futebol Americano"] },
+      { id: "individual-sports", label: "🎾 Esportes Individuais", subtypes: ["Tênis", "Beach Tennis", "Tênis de Mesa", "Badminton", "Squash", "Golfe", "Boliche", "Tiro com Arco"] },
+      { id: "mind-body", label: "🧘 Corpo e Mente", subtypes: ["Yoga", "Pilates", "Alongamento", "Meditação Ativa", "Tai Chi Chuan", "Qi Gong"] },
+      { id: "dance", label: "💃 Dança", subtypes: ["Zumba", "FitDance", "Dança de Salão", "Ballet", "Jazz", "Hip Hop", "Forró", "Samba", "Dança Contemporânea", "K-pop Dance"] },
+      { id: "outdoor", label: "🏔️ Outdoor", subtypes: ["Escalada", "Rapel", "Trekking", "Hiking", "Montanhismo", "Canoagem", "Caiaque", "Stand Up Paddle", "Surfe", "Windsurf", "Kitesurf", "Remo"] },
+      { id: "winter", label: "❄️ Esportes de Inverno", subtypes: ["Esqui", "Snowboard", "Patinação no Gelo"] },
+      { id: "wheels", label: "🛼 Rodas", subtypes: ["Skate", "Longboard", "Patins", "Patinete"] },
+      { id: "cardio", label: "❤️ Cardio", subtypes: ["Elíptico", "Escada", "Step", "Corda", "Remo Indoor"] },
+      { id: "hiit", label: "🏃 HIIT", subtypes: ["HIIT", "Tabata", "EMOM", "AMRAP"] },
+      { id: "kids", label: "🧒 Infantil", subtypes: ["Recreação", "Psicomotricidade", "Ginástica Infantil"] },
+      { id: "inclusive", label: "♿ Exercícios Inclusivos e Adaptados", subtypes: ["Corrida em Cadeira de Rodas", "Basquete em Cadeira de Rodas", "Tênis em Cadeira de Rodas", "Rugby em Cadeira de Rodas", "Handbike", "Dança em Cadeira de Rodas", "Natação Adaptada", "Hidroterapia", "Musculação Adaptada", "Treino Funcional Adaptado", "Alongamento Adaptado", "Mobilidade Adaptada", "Fortalecimento Muscular Adaptado", "Exercícios com Faixas Elásticas", "Exercícios Sentados", "Caminhada Assistida", "Caminhada com Andador", "Caminhada com Bengala", "Exercícios de Equilíbrio", "Coordenação Motora", "Fisioterapia Motora", "Bicicleta Ergométrica Adaptada", "Pedal Manual (Handcycle Indoor)", "Exercícios Respiratórios", "Cardio Adaptado", "Yoga Adaptada", "Pilates Adaptado", "Tai Chi Adaptado", "Relaxamento Guiado", "Meditação em Movimento", "Psicomotricidade", "Coordenação Motora Global", "Coordenação Motora Fina", "Estimulação Sensorial", "Circuito Motor", "Atletismo Paralímpico", "Bocha Paralímpica", "Goalball", "Futebol de Cegos", "Vôlei Sentado", "Halterofilismo Paralímpico", "Paracanoagem", "Paratriatlo", "Parabadminton", "Parataekwondo", "Esgrima em Cadeira de Rodas", "Remo Paralímpico", "Hipismo Paralímpico", "Caminhada Leve", "Ginástica Funcional para Idosos", "Pilates Sênior", "Hidroginástica", "Dança Sênior", "Mobilidade Articular"] },
+      { id: "other", label: "➕ Outros", subtypes: ["Outro esporte não listado", "Digitar exercício personalizado..."] },
+      { id: "imported", label: "📱 Importados Automaticamente", subtypes: ["Google Fit", "Health Connect", "Apple Health", "Samsung Health", "Garmin", "Polar", "Suunto", "Coros", "Strava", "Fitbit", "Amazfit", "Huawei Health", "Zepp", "Mi Fitness"] }
+    ];
+    return list.map((cat: any) => {
+      let backendCategory: ExerciseCategory = "Outro";
+      if (cat.id === "strength") backendCategory = "Musculação";
+      else if (cat.id === "running") backendCategory = "Corrida";
+      else if (cat.id === "cycling") backendCategory = "Ciclismo";
+      else if (cat.id === "swimming") backendCategory = "Aquáticos";
+      else if (cat.id === "martial-arts") backendCategory = "Artes Marciais";
+      else if (cat.id === "team-sports" || cat.id === "individual-sports") backendCategory = "Esportes";
+      else if (cat.id === "mind-body") backendCategory = "Bem-estar";
+      else if (cat.id === "dance") backendCategory = "Dança";
+
+      let subtypes = cat.subtypes || [];
+      if (cat.id === "other") {
+        subtypes = ["Outro esporte não listado", "Digitar exercício personalizado...", "Outro", ...customExercises.map(e => e.name)];
+      } else {
+        if (!subtypes.includes("Outro")) {
+          subtypes = [...subtypes, "Outro"];
+        }
+      }
+      return {
+        id: cat.id,
+        label: cat.label,
+        backendCategory,
+        subtypes
+      };
+    });
+  }, [exerciseCategories, customExercises]);
+
+  const handleSaveCustomExercise = async () => {
+    if (!customExerciseInput.trim()) return;
+    try {
+      const res = await fetch("/api/exercises/custom", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          userId: currentUserId,
+          name: customExerciseInput.trim()
+        })
+      });
+      if (res.ok) {
+        const savedName = customExerciseInput.trim();
+        setCustomExerciseInput("");
+        await fetchCustomExercises();
+        setSelectedSubtype(savedName);
+      }
+    } catch (err) {
+      console.error("Error saving custom exercise:", err);
+    }
+  };
 
   // Selected workout states
   const [selectedLibId, setSelectedLibId] = useState<string>("strength");
   const [selectedSubtype, setSelectedSubtype] = useState<string>("Musculação Tradicional");
+  const [customCategoryText, setCustomCategoryText] = useState("");
+  const [customSubtypeText, setCustomSubtypeText] = useState("");
 
   useEffect(() => {
     if (exerciseLibrary && exerciseLibrary.length > 0) {
@@ -354,6 +415,134 @@ export default function ActivityLogger({
 
   const [importedActivities, setImportedActivities] = useState<any[]>([]);
 
+  // Function to load saved user integration tokens and update connection indicators
+  const fetchUserTokens = async () => {
+    if (!currentUser?.id) return;
+    try {
+      const res = await fetch(`/api/integrations/tokens?userId=${currentUser.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setAppConnections((prev) => ({
+          ...prev,
+          strava: !!(data?.strava && data?.strava.accessToken),
+          googleFit: !!(data?.["google-fit"] && data?.["google-fit"].accessToken),
+        }));
+        // Retrieve and format any real recent workout activity records
+        fetchRealActivities(data);
+      }
+    } catch (err) {
+      console.error("Erro ao buscar conexões de integração:", err);
+    }
+  };
+
+  // Helper to retrieve live records from Strava & Google Fit REST APIs
+  const fetchRealActivities = async (tokens: any) => {
+    const newImported: any[] = [];
+
+    if (tokens?.strava && tokens.strava.accessToken) {
+      try {
+        const actRes = await fetch(`/api/integrations/strava/activities?accessToken=${encodeURIComponent(tokens.strava.accessToken)}`);
+        if (actRes.ok) {
+          const list = await actRes.json();
+          if (Array.isArray(list)) {
+            list.slice(0, 5).forEach((item: any) => {
+              newImported.push({
+                id: `strava-${item.id}`,
+                app: "strava",
+                type: "Treino Strava",
+                subType: item.type === "Run" ? "Corrida" : item.type === "Ride" ? "Ciclismo" : item.name || "Exercício",
+                minutes: Math.round((item.moving_time || item.elapsed_time || 1800) / 60),
+                distanceKm: item.distance ? Number((item.distance / 1000).toFixed(2)) : undefined,
+                calories: item.kilojoules ? Math.round(item.kilojoules * 0.239) : undefined,
+                date: item.start_date_local ? new Date(item.start_date_local).toLocaleDateString("pt-BR") : "Hoje"
+              });
+            });
+          }
+        }
+      } catch (e) {
+        console.error("Erro ao buscar treinos do Strava:", e);
+      }
+    }
+
+    if (tokens?.["google-fit"] && tokens["google-fit"].accessToken) {
+      try {
+        const actRes = await fetch(`/api/integrations/google-fit/activities?accessToken=${encodeURIComponent(tokens["google-fit"].accessToken)}`);
+        if (actRes.ok) {
+          const fitData = await actRes.json();
+          if (fitData && fitData.bucket) {
+            fitData.bucket.forEach((b: any, index: number) => {
+              let steps = 0;
+              let calories = 0;
+              let activeMins = 0;
+              
+              if (b.dataset) {
+                b.dataset.forEach((ds: any) => {
+                  if (ds.point) {
+                    ds.point.forEach((p: any) => {
+                      if (p.value) {
+                        p.value.forEach((v: any) => {
+                          if (ds.dataSourceId?.includes("step")) {
+                            steps += v.intVal || 0;
+                          } else if (ds.dataSourceId?.includes("calories")) {
+                            calories += Math.round(v.fpVal || 0);
+                          } else if (ds.dataSourceId?.includes("heart")) {
+                            activeMins += Math.round(v.fpVal || 0);
+                          }
+                        });
+                      }
+                    });
+                  }
+                });
+              }
+              
+              if (steps > 0 || calories > 0 || activeMins > 0) {
+                newImported.push({
+                  id: `gfit-${index}-${Date.now()}`,
+                  app: "googleFit",
+                  type: "Sincronização Google Fit",
+                  subType: activeMins > 0 ? "Caminhada/Corrida" : "Treino Livre",
+                  minutes: activeMins || Math.round(steps / 100) || 30,
+                  distanceKm: steps ? Number((steps * 0.00075).toFixed(2)) : undefined,
+                  calories: calories || undefined,
+                  steps: steps || undefined,
+                  date: index === 0 ? "Hoje" : `Há ${index} dia(s)`
+                });
+              }
+            });
+          }
+        }
+      } catch (e) {
+        console.error("Erro ao buscar treinos do Google Fit:", e);
+      }
+    }
+
+    if (newImported.length > 0) {
+      setImportedActivities(newImported);
+    }
+  };
+
+  // Sync token connections on mounting and user updates
+  useEffect(() => {
+    fetchUserTokens();
+  }, [currentUser?.id]);
+
+  // Hook into successful authentication message events from child popups
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const origin = event.origin;
+      if (!origin.endsWith('.run.app') && !origin.includes('localhost')) {
+        return;
+      }
+      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+        fetchUserTokens();
+        const serviceFriendly = event.data.service === 'google-fit' ? 'Google Fit' : 'Strava';
+        setLocalSuccessMsg(`Integração com ${serviceFriendly} realizada com sucesso e armazenada de forma persistente!`);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [currentUser?.id]);
+
   const toggleConnection = async (appId: string) => {
     const isConnecting = !appConnections[appId];
     onClearMsgs();
@@ -361,28 +550,87 @@ export default function ActivityLogger({
     setLocalErrorMsg(null);
     
     if (isConnecting) {
-      // Clear explanation when user requests authorization
-      const confirmAuth = window.confirm(
-        `Deseja autorizar o BodhiShape a integrar e sincronizar as atividades com sua conta oficial do ${appId.toUpperCase()}?\n\nSerão importadas apenas as métricas reais de treinos realizados.`
-      );
-      if (confirmAuth) {
-        setAppConnections((prev) => ({ ...prev, [appId]: true }));
-        setLocalSuccessMsg(`Autorização concedida! Sincronização em segundo plano configurada com o ${appId.toUpperCase()} de forma segura.`);
-        
-        // Populate one real-time dynamically calculated element under authorization context for simulation or real testing
-        setTimeout(() => {
-          setImportedActivities(prev => [
-            ...prev,
-            { id: `imp-${Date.now()}`, app: appId, type: "Treino Sincronizado", subType: "Treino Livre", minutes: 40, date: "Hoje" }
-          ]);
-        }, 1000);
+      if (appId === "strava" || appId === "googleFit") {
+        const serviceName = appId === "googleFit" ? "google-fit" : "strava";
+        const confirmAuth = window.confirm(
+          `Deseja autorizar o BodhiShape a integrar e sincronizar as atividades com sua conta oficial do ${appId === "googleFit" ? "Google Fit" : "Strava"}?\n\nSerão importadas as métricas reais de treinos realizados.`
+        );
+        if (!confirmAuth) return;
+
+        try {
+          const res = await fetch(`/api/integrations/${serviceName}/auth?userId=${currentUser?.id || ""}`);
+          if (!res.ok) throw new Error("Não foi possível gerar a URL de autorização");
+          const data = await res.json();
+          
+          if (data.url) {
+            // Open OAuth pop-up window directly as required by standard specifications
+            const authPopup = window.open(
+              data.url,
+              `${appId}_oauth_popup`,
+              "width=600,height=700,status=no,resizable=yes"
+            );
+            if (!authPopup) {
+              alert("Por favor, permita popups para este site para completar a integração.");
+            }
+          }
+        } catch (err: any) {
+          setLocalErrorMsg(err.message || "Erro ao conectar com o serviço.");
+        }
+      } else {
+        // Fallback for mock/simulation apps (Samsung Health, Garmin)
+        const confirmAuth = window.confirm(
+          `Deseja autorizar o BodhiShape a integrar e sincronizar as atividades com sua conta oficial do ${appId.toUpperCase()}?\n\nSerão importadas apenas as métricas reais de treinos realizados.`
+        );
+        if (confirmAuth) {
+          setAppConnections((prev) => ({ ...prev, [appId]: true }));
+          setLocalSuccessMsg(`Autorização concedida! Sincronização em segundo plano configurada com o ${appId.toUpperCase()} de forma segura.`);
+          
+          setTimeout(() => {
+            setImportedActivities(prev => [
+              ...prev,
+              { id: `imp-${Date.now()}`, app: appId, type: "Treino Sincronizado", subType: "Treino Livre", minutes: 40, date: "Hoje" }
+            ]);
+          }, 1000);
+        }
       }
     } else {
-      setAppConnections((prev) => ({ ...prev, [appId]: false }));
-      setImportedActivities(prev => prev.filter(i => i.app !== appId));
-      setLocalSuccessMsg(`Integração com o ${appId.toUpperCase()} desconectada.`);
+      const confirmDisconnect = window.confirm(
+        `Tem certeza que deseja desvincular a sua conta do ${appId.toUpperCase()}?\n\nIsso removerá os tokens correspondentes da nuvem.`
+      );
+      if (!confirmDisconnect) return;
+
+      if ((appId === "strava" || appId === "googleFit") && currentUser?.id) {
+        const serviceName = appId === "googleFit" ? "google-fit" : "strava";
+        try {
+          // Send request to overwrite/wipe saved tokens on profile document in Firestore database
+          const res = await fetch(`/api/integrations/save-token`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: currentUser.id,
+              service: serviceName,
+              accessToken: "",
+              refreshToken: "",
+              expiresAt: 0
+            })
+          });
+          if (res.ok) {
+            setAppConnections((prev) => ({ ...prev, [appId]: false }));
+            setImportedActivities(prev => prev.filter(i => i.app !== appId));
+            setLocalSuccessMsg(`Conexão com o ${appId.toUpperCase()} removida com sucesso.`);
+          }
+        } catch (err) {
+          console.error("Erro ao desconectar:", err);
+          setLocalErrorMsg("Erro ao remover a conexão na nuvem.");
+        }
+      } else {
+        setAppConnections((prev) => ({ ...prev, [appId]: false }));
+        setImportedActivities(prev => prev.filter(i => i.app !== appId));
+        setLocalSuccessMsg(`Integração com o ${appId.toUpperCase()} desconectada.`);
+      }
     }
   };
+
 
   const handleUseImported = (act: any) => {
     setSelectedLogType("exercise");
@@ -417,11 +665,19 @@ export default function ActivityLogger({
     } else if (selectedLogType === "exercise") {
       // Resolve mapping and custom annotations
       const activeLib = exerciseLibrary.find(l => l.id === selectedLibId) || exerciseLibrary[0];
+
+      const finalCategory = selectedLibId === "other"
+        ? (customCategoryText.trim() || "Outro")
+        : activeLib.backendCategory;
+
+      const finalSubtype = (selectedSubtype === "Outro" || selectedSubtype === "Outro esporte não listado")
+        ? (customSubtypeText.trim() || "Outro")
+        : selectedSubtype;
       
       const metricsText = [
-        distance ? `🏃 Distância: ${distance}km` : "",
-        calories ? `🔥 Calorias: ${calories}kcal` : "",
-        steps ? `👣 Passos: ${steps}` : "",
+        (extraMetrics.distanceKm || distance) ? `🏃 Distância: ${extraMetrics.distanceKm || distance}km` : "",
+        (extraMetrics.calories || calories) ? `🔥 Calorias: ${extraMetrics.calories || calories}kcal` : "",
+        (extraMetrics.steps || steps) ? `👣 Passos: ${extraMetrics.steps || steps}` : "",
         location ? `📍 Local: ${location}` : ""
       ].filter(Boolean).join(" | ");
 
@@ -430,21 +686,21 @@ export default function ActivityLogger({
       onLogActivity({
         type: "exercise",
         minutes: exerciseMins,
-        exerciseCategory: activeLib.backendCategory,
-        exerciseType: selectedSubtype,
+        exerciseCategory: finalCategory as any,
+        exerciseType: finalSubtype,
         notes: resolvedNotes,
         customTimestamp: timestamp,
-        distanceKm: distance ? Number(distance) : undefined,
-        calories: calories ? Number(calories) : undefined,
-        steps: steps ? Number(steps) : undefined,
-        heartRateAvg: heartRateAvg ? Number(heartRateAvg) : undefined,
-        heartRateMax: heartRateMax ? Number(heartRateMax) : undefined,
-        pace: pace ? Number(pace) : undefined,
-        weightUsed: weightUsed ? Number(weightUsed) : undefined,
-        sets: sets ? Number(sets) : undefined,
-        reps: reps ? Number(reps) : undefined,
+        distanceKm: (extraMetrics.distanceKm || distance) ? Number(extraMetrics.distanceKm || distance) : undefined,
+        calories: (extraMetrics.calories || calories) ? Number(extraMetrics.calories || calories) : undefined,
+        steps: (extraMetrics.steps || steps) ? Number(extraMetrics.steps || steps) : undefined,
+        heartRateAvg: (extraMetrics.heartRateAvg || heartRateAvg) ? Number(extraMetrics.heartRateAvg || heartRateAvg) : undefined,
+        heartRateMax: (extraMetrics.heartRateMax || heartRateMax) ? Number(extraMetrics.heartRateMax || heartRateMax) : undefined,
+        pace: (extraMetrics.pace || pace) ? Number(extraMetrics.pace || pace) : undefined,
+        weightUsed: (extraMetrics.weightUsed || weightUsed) ? Number(extraMetrics.weightUsed || weightUsed) : undefined,
+        sets: (extraMetrics.sets || sets) ? Number(extraMetrics.sets || sets) : undefined,
+        reps: (extraMetrics.reps || reps) ? Number(extraMetrics.reps || reps) : undefined,
         location: location || undefined,
-        sourceApp: sourceApp || undefined
+        sourceApp: extraMetrics.sourceApp !== "Manual" ? (extraMetrics.sourceApp as any) : (sourceApp !== "Manual" ? (sourceApp as any) : undefined)
       });
       setNotes("");
       setDistance("");
@@ -458,6 +714,20 @@ export default function ActivityLogger({
       setSets("");
       setReps("");
       setSourceApp("Manual");
+      setCustomCategoryText("");
+      setCustomSubtypeText("");
+      setExtraMetrics({
+        distanceKm: "",
+        calories: "",
+        steps: "",
+        heartRateAvg: "",
+        heartRateMax: "",
+        pace: "",
+        weightUsed: "",
+        sets: "",
+        reps: "",
+        sourceApp: "Manual"
+      });
     }
   };
 
@@ -1216,7 +1486,7 @@ export default function ActivityLogger({
               {/* DYNAMIC LIBRARY CARDS */}
               <div className="space-y-3">
                 <div>
-                  <label className="text-xs font-bold text-slate-400 font-heading block mb-1.5">Área do Shape (Total Biblioteca):</label>
+                  <label className="text-xs font-bold text-slate-400 font-heading block mb-1.5">Grupo Disciplinar / Área do Shape:</label>
                   <select
                     value={selectedLibId}
                     onChange={(e) => {
@@ -1232,6 +1502,19 @@ export default function ActivityLogger({
                       <option key={lib.id} value={lib.id}>{lib.label}</option>
                     ))}
                   </select>
+
+                  {/* Campo de texto livre para Categoria personalizada se Outro for selecionado */}
+                  {selectedLibId === "other" && (
+                    <div className="mt-2 animate-fadeIn">
+                      <input
+                        type="text"
+                        placeholder="Digite o nome do grupo/categoria"
+                        value={customCategoryText}
+                        onChange={(e) => setCustomCategoryText(e.target.value)}
+                        className="w-full text-xs bg-slate-950 border border-teal-500/50 rounded-xl p-2.5 outline-none text-slate-100 focus:border-teal-400"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -1271,6 +1554,38 @@ export default function ActivityLogger({
                       );
                     })}
                   </div>
+
+                  {/* Campo de texto livre para Modalidade personalizada se Outro for selecionado */}
+                  {(selectedSubtype === "Outro" || selectedSubtype === "Outro esporte não listado") && (
+                    <div className="mt-2.5 animate-fadeIn">
+                      <input
+                        type="text"
+                        placeholder="Digite o nome da modalidade ou atividade"
+                        value={customSubtypeText}
+                        onChange={(e) => setCustomSubtypeText(e.target.value)}
+                        className="w-full text-xs bg-slate-950 border border-teal-500/50 rounded-xl p-2.5 outline-none text-slate-100 focus:border-teal-400"
+                      />
+                    </div>
+                  )}
+
+                  {selectedSubtype === "Digitar exercício personalizado..." && (
+                    <div className="mt-2.5 flex gap-2 items-center bg-slate-950/60 p-2.5 rounded-xl border border-soka-green/20">
+                      <input
+                        type="text"
+                        placeholder="Digite o exercício personalizado..."
+                        value={customExerciseInput}
+                        onChange={(e) => setCustomExerciseInput(e.target.value)}
+                        className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 outline-none focus:border-soka-green/60"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSaveCustomExercise}
+                        className="bg-soka-green hover:bg-soka-green/90 text-slate-950 text-xs font-bold px-3.5 py-1.5 rounded-lg transition shrink-0"
+                      >
+                        Confirmar
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1405,6 +1720,119 @@ export default function ActivityLogger({
                       <select
                         value={sourceApp}
                         onChange={(e) => setSourceApp(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none cursor-pointer"
+                      >
+                        {["Manual", "Google Fit", "Apple Health", "Samsung Health", "Garmin", "Strava", "Fitbit", "Polar", "Suunto", "Coros", "Amazfit", "Huawei Health", "Outro"].map((app) => (
+                          <option key={app} value={app}>{app}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Conditional inputs for extraMetrics */}
+              {selectedLogType === "exercise" && daimokuTimerProps && selectedSubtype && (
+                <div className="bg-indigo-950/20 p-4 rounded-xl border border-indigo-500/20 space-y-3">
+                  <span className="text-[10px] uppercase font-mono font-bold text-indigo-400 block">
+                    Métricas Extras do Treino (Extra Metrics)
+                  </span>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[10px] text-slate-455 block mb-0.5">🏃 Distância (km)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 5"
+                        value={extraMetrics.distanceKm}
+                        onChange={(e) => setExtraMetrics(prev => ({ ...prev, distanceKm: e.target.value }))}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-455 block mb-0.5">🔥 Calorias (kcal)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 300"
+                        value={extraMetrics.calories}
+                        onChange={(e) => setExtraMetrics(prev => ({ ...prev, calories: e.target.value }))}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-455 block mb-0.5">👣 Passos</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 6000"
+                        value={extraMetrics.steps}
+                        onChange={(e) => setExtraMetrics(prev => ({ ...prev, steps: e.target.value }))}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-455 block mb-0.5">⏱️ Ritmo (min/km)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 5.30"
+                        value={extraMetrics.pace}
+                        onChange={(e) => setExtraMetrics(prev => ({ ...prev, pace: e.target.value }))}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-455 block mb-0.5">❤️ FC Média (bpm)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 140"
+                        value={extraMetrics.heartRateAvg}
+                        onChange={(e) => setExtraMetrics(prev => ({ ...prev, heartRateAvg: e.target.value }))}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-455 block mb-0.5">📈 FC Máxima (bpm)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 170"
+                        value={extraMetrics.heartRateMax}
+                        onChange={(e) => setExtraMetrics(prev => ({ ...prev, heartRateMax: e.target.value }))}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-455 block mb-0.5">🏋️ Peso Usado (kg)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 25"
+                        value={extraMetrics.weightUsed}
+                        onChange={(e) => setExtraMetrics(prev => ({ ...prev, weightUsed: e.target.value }))}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-455 block mb-0.5">🔄 Séries</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 3"
+                        value={extraMetrics.sets}
+                        onChange={(e) => setExtraMetrics(prev => ({ ...prev, sets: e.target.value }))}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-455 block mb-0.5">🔁 Repetições</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 10"
+                        value={extraMetrics.reps}
+                        onChange={(e) => setExtraMetrics(prev => ({ ...prev, reps: e.target.value }))}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-455 block mb-0.5">📱 Origem do Treino</label>
+                      <select
+                        value={extraMetrics.sourceApp}
+                        onChange={(e) => setExtraMetrics(prev => ({ ...prev, sourceApp: e.target.value }))}
                         className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none cursor-pointer"
                       >
                         {["Manual", "Google Fit", "Apple Health", "Samsung Health", "Garmin", "Strava", "Fitbit", "Polar", "Suunto", "Coros", "Amazfit", "Huawei Health", "Outro"].map((app) => (

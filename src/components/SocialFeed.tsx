@@ -185,6 +185,8 @@ export default function SocialFeed({
   const [exercise, setExercise] = useState(false);
   const [exerciseCategory, setExerciseCategory] = useState<ExerciseCategory>("Musculação");
   const [exerciseType, setExerciseType] = useState("Musculação");
+  const [customCategoryInput, setCustomCategoryInput] = useState("");
+  const [customTypeInput, setCustomTypeInput] = useState("");
   
   // Exercise optional metrics
   const [exerciseDate, setExerciseDate] = useState(() => new Date().toISOString().split("T")[0]);
@@ -420,6 +422,8 @@ export default function SocialFeed({
     setNoPublish(false);
     setShowImageChoices(false);
     setShowVideoChoices(false);
+    setCustomCategoryInput("");
+    setCustomTypeInput("");
   };
 
   const handleCombinedPostSubmit = async (e: React.FormEvent) => {
@@ -429,6 +433,14 @@ export default function SocialFeed({
     setSuccessMessage(null);
 
     const activeDaimokuMinutes = isCustomDaimoku ? Number(customDaimokuVal) || 0 : daimokuMinutes;
+
+    const finalCategory = exerciseCategory === "Outro"
+      ? (customCategoryInput.trim() || "Outro")
+      : exerciseCategory;
+
+    const finalType = exerciseType === "Outro"
+      ? (customTypeInput.trim() || "Outro")
+      : exerciseType;
 
     const payload = {
       userId: currentUser?.id,
@@ -441,8 +453,8 @@ export default function SocialFeed({
       daimoku,
       daimokuMinutes: activeDaimokuMinutes,
       exercise,
-      exerciseCategory,
-      exerciseType,
+      exerciseCategory: finalCategory as any,
+      exerciseType: finalType,
       exerciseDate,
       exerciseTime,
       exerciseDuration: Number(exerciseDuration) || 0,
@@ -869,6 +881,8 @@ export default function SocialFeed({
                               const matching = exerciseLib.find(l => l.category === newCat);
                               if (matching && matching.subtypes.length > 0) {
                                 setExerciseType(matching.subtypes[0]);
+                              } else {
+                                setExerciseType("Outro");
                               }
                             }}
                             className="w-full text-xs bg-slate-950 border border-slate-800 rounded-xl p-2.5 outline-none text-slate-200 focus:border-slate-700"
@@ -877,35 +891,70 @@ export default function SocialFeed({
                               <option key={lib.category} value={lib.category}>{lib.category}</option>
                             ))}
                           </select>
+                          
+                          {/* Campo de texto livre para Categoria personalizada se Outro for selecionado */}
+                          {exerciseCategory === "Outro" && (
+                            <div className="mt-2 animate-fadeIn">
+                              <input
+                                type="text"
+                                placeholder="Digite o nome do grupo/categoria"
+                                value={customCategoryInput}
+                                onChange={(e) => setCustomCategoryInput(e.target.value)}
+                                className="w-full text-xs bg-slate-950 border border-teal-500/50 rounded-xl p-2.5 outline-none text-slate-100 focus:border-teal-400"
+                              />
+                            </div>
+                          )}
                         </div>
 
                         {/* Selector para sub-modalidades específicas */}
                         <div className="space-y-1">
                           <label className="text-[9px] font-bold text-slate-400 uppercase">Modalidade Específica:</label>
-                          <div className="flex gap-2">
-                            <select
-                              value={exerciseType}
-                              onChange={(e) => setExerciseType(e.target.value)}
-                              className="flex-1 text-xs bg-slate-950 border border-slate-800 rounded-xl p-2.5 outline-none text-slate-100 focus:border-slate-700"
-                            >
-                              {(exerciseLib.find(l => l.category === exerciseCategory)?.subtypes || ["Outro"]).map((sub) => (
-                                <option key={sub} value={sub}>{sub}</option>
-                              ))}
-                            </select>
+                          <div className="flex flex-col gap-2">
+                            <div className="flex gap-2">
+                              <select
+                                value={exerciseType}
+                                onChange={(e) => setExerciseType(e.target.value)}
+                                className="flex-1 text-xs bg-slate-950 border border-slate-800 rounded-xl p-2.5 outline-none text-slate-100 focus:border-slate-700"
+                              >
+                                {(() => {
+                                  const baseSubtypes = exerciseLib.find(l => l.category === exerciseCategory)?.subtypes || [];
+                                  const list = [...baseSubtypes];
+                                  if (!list.includes("Outro")) {
+                                    list.push("Outro");
+                                  }
+                                  return list;
+                                })().map((sub) => (
+                                  <option key={sub} value={sub}>{sub}</option>
+                                ))}
+                              </select>
 
-                            {/* Shortcut favoritar button */}
-                            <button
-                              type="button"
-                              onClick={() => handleToggleFavorite(exerciseCategory, exerciseType)}
-                              className={`p-2.5 rounded-xl border transition-all ${
-                                favorites.some(f => f.category === exerciseCategory && f.type === exerciseType)
-                                  ? "bg-amber-400/10 border-amber-400/30 text-amber-400"
-                                  : "bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300"
-                              }`}
-                              title="Favoritar ou desfavoritar modalidade"
-                            >
-                              <Star className="w-3.5 h-3.5 fill-current" />
-                            </button>
+                              {/* Shortcut favoritar button */}
+                              <button
+                                type="button"
+                                onClick={() => handleToggleFavorite(exerciseCategory, exerciseType)}
+                                className={`p-2.5 rounded-xl border transition-all ${
+                                  favorites.some(f => f.category === exerciseCategory && f.type === exerciseType)
+                                    ? "bg-amber-400/10 border-amber-400/30 text-amber-400"
+                                    : "bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300"
+                                }`}
+                                title="Favoritar ou desfavoritar modalidade"
+                              >
+                                <Star className="w-3.5 h-3.5 fill-current" />
+                              </button>
+                            </div>
+
+                            {/* Campo de texto livre para Modalidade personalizada se Outro for selecionado */}
+                            {exerciseType === "Outro" && (
+                              <div className="animate-fadeIn">
+                                <input
+                                  type="text"
+                                  placeholder="Digite o nome da modalidade ou atividade"
+                                  value={customTypeInput}
+                                  onChange={(e) => setCustomTypeInput(e.target.value)}
+                                  className="w-full text-xs bg-slate-950 border border-teal-500/50 rounded-xl p-2.5 outline-none text-slate-100 focus:border-teal-400"
+                                />
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
