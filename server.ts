@@ -3496,6 +3496,310 @@ app.get("/api/ai-incentive", async (req, res) => {
   res.json({ quote });
 });
 
+function getDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function parseGPX(xml: string) {
+  const trkptRegex = /<trkpt\s+([^>]+)>([\s\S]*?)<\/trkpt>/g;
+  let match;
+  const points: { lat: number; lon: number; time?: string; hr?: number }[] = [];
+  while ((match = trkptRegex.exec(xml)) !== null) {
+    const attrs = match[1];
+    const inner = match[2];
+    const latMatch = attrs.match(/lat=["']([^"']+)["']/);
+    const lonMatch = attrs.match(/lon=["']([^"']+)["']/);
+    if (latMatch && lonMatch) {
+      const lat = parseFloat(latMatch[1]);
+      const lon = parseFloat(lonMatch[1]);
+      const timeMatch = inner.match(/<time>([^<]+)<\/time>/);
+      const hrMatch = inner.match(/<(?:gpxtpx:)?hr>([^<]+)<\/(?:gpxtpx:)?hr>/) || 
+                      inner.match(/<HeartRateBpm><Value>([^<]+)<\/Value>/);
+      points.push({
+        lat,
+        lon: parseFloat(lonMatch[1]),
+        time: timeMatch ? timeMatch[1] : undefined,
+        hr: hrMatch ? parseInt(hrMatch[1], 10) : undefined
+      });
+    }
+  }
+  if (points.length === 0) {
+    throw new Error("Nenhum trackpoint encontrado no arquivo GPX.");
+  }
+  let totalDistance = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    totalDistance += getDistance(points[i].lat, points[i].lon, points[i + 1].lat, points[i + 1].lon);
+  }
+  const firstPoint = points[0];
+  const lastPoint = points[points.length - 1];
+  let durationMinutes = 30;
+  let timestamp = new Date().toISOString();
+  if (firstPoint.time) {
+    timestamp = firstPoint.time;
+    if (lastPoint.time) {
+      const ms = new Date(lastPoint.time).getTime() - new Date(firstPoint.time).getTime();
+      if (!isNaN(ms) && ms > 0) {
+        durationMinutes = Math.round(ms / 60000);
+      }
+    }
+  }
+  if (durationMinutes <= 0) durationMinutes = 1;
+  const hrPoints = points.filter(p => p.hr !== undefined && !isNaN(p.hr));
+  const avgHr = hrPoints.length > 0 ? Math.round(hrPoints.reduce((sum, p) => sum + (p.hr || 0), 0) / hrPoints.length) : undefined;
+  const distanceKm = Number(totalDistance.toFixed(2));
+  const avgSpeed = durationMinutes > 0 ? (distanceKm / (durationMinutes / 60)) : 0;
+  let category: "Corrida" | "Ciclismo" | "Caminhada" = "Caminhada";
+  if (avgSpeed > 20) {
+    category = "Ciclismo";
+  } else if (avgSpeed > 8) {
+    category = "Corrida";
+  }
+  let calories = 0;
+  if (category === "Corrida") {
+    calories = durationMinutes * 10;
+  } else if (category === "Ciclismo") {
+    calories = durationMinutes * 8;
+  } else {
+    calories = durationMinutes * 5;
+  }
+  return {
+    category,
+    minutes: durationMinutes,
+    distanceKm,
+    calories,
+    heartRate: avgHr,
+    timestamp,
+    subType: "Importado GPX"
+  };
+}
+
+function parseTCX(xml: string) {
+  const trackpointRegex = /<Trackpoint>([\s\S]*?)<\/Trackpoint>/g;
+  let match;
+  const points: { lat?: number; lon?: number; time?: string; hr?: number; distance?: number }[] = [];
+  while ((match = trackpointRegex.exec(xml)) !== null) {
+    const inner = match[1];
+    const latMatch = inner.match(/<LatitudeDegrees>([^<]+)<\/LatitudeDegrees>/);
+    const lonMatch = inner.match(/<LongitudeDegrees>([^<]+)<\/LongitudeDegrees>/);
+    const timeMatch = inner.match(/<Time>([^<]+)<\/Time>/);
+    const hrMatch = inner.match(/<HeartRateBpm(?:\s+[^>]*)*>[\s\S]*?<Value>([^<]+)<\/Value>[\s\S]*?<\/HeartRateBpm>/) || inner.match(/<hr>([^<]+)<\/hr>/);
+    const distMatch = inner.match(/<DistanceMeters>([^<]+)<\/DistanceMeters>/);
+    points.push({
+      lat: latMatch ? parseFloat(latMatch[1]) : undefined,
+      lon: lonMatch ? parseFloat(lonMatch[1]) : undefined,
+      time: timeMatch ? timeMatch[1] : undefined,
+      hr: hrMatch ? parseInt(hrMatch[1], 10) : undefined,
+      distance: distMatch ? parseFloat(distMatch[1]) : undefined
+    });
+  }
+  if (points.length === 0) {
+    throw new Error("Nenhum trackpoint encontrado no arquivo TCX.");
+  }
+  let totalDistance = 0;
+  const distPoints = points.filter(p => p.distance !== undefined && !isNaN(p.distance));
+  if (distPoints.length > 0) {
+    totalDistance = distPoints[distPoints.length - 1].distance! / 1000;
+  } else {
+    const latLonPoints = points.filter(p => p.lat !== undefined && p.lon !== undefined);
+    for (let i = 0; i < latLonPoints.length - 1; i++) {
+      totalDistance += getDistance(latLonPoints[i].lat!, latLonPoints[i].lon!, latLonPoints[i + 1].lat!, latLonPoints[i + 1].lon!);
+    }
+  }
+  let calories = 0;
+  const caloriesMatch = xml.match(/<Calories>([^<]+)<\/Calories>/);
+  if (caloriesMatch) {
+    calories = Math.round(parseFloat(caloriesMatch[1]));
+  }
+  const firstPoint = points[0];
+  const lastPoint = points[points.length - 1];
+  let durationMinutes = 30;
+  let timestamp = new Date().toISOString();
+  if (firstPoint.time) {
+    timestamp = firstPoint.time;
+    if (lastPoint.time) {
+      const ms = new Date(lastPoint.time).getTime() - new Date(firstPoint.time).getTime();
+      if (!isNaN(ms) && ms > 0) {
+        durationMinutes = Math.round(ms / 60000);
+      }
+    }
+  }
+  if (durationMinutes <= 0) durationMinutes = 1;
+  const hrPoints = points.filter(p => p.hr !== undefined && !isNaN(p.hr));
+  const avgHr = hrPoints.length > 0 ? Math.round(hrPoints.reduce((sum, p) => sum + (p.hr || 0), 0) / hrPoints.length) : undefined;
+  const distanceKm = Number(totalDistance.toFixed(2));
+  const avgSpeed = durationMinutes > 0 ? (distanceKm / (durationMinutes / 60)) : 0;
+  let category: "Corrida" | "Ciclismo" | "Caminhada" = "Caminhada";
+  if (avgSpeed > 20) {
+    category = "Ciclismo";
+  } else if (avgSpeed > 8) {
+    category = "Corrida";
+  }
+  if (calories <= 0) {
+    if (category === "Corrida") {
+      calories = durationMinutes * 10;
+    } else if (category === "Ciclismo") {
+      calories = durationMinutes * 8;
+    } else {
+      calories = durationMinutes * 5;
+    }
+  }
+  return {
+    category,
+    minutes: durationMinutes,
+    distanceKm,
+    calories,
+    heartRate: avgHr,
+    timestamp,
+    subType: "Importado TCX"
+  };
+}
+
+function parseMultipart(buffer: Buffer, boundary: string) {
+  const parts: { name: string; filename?: string; data: Buffer }[] = [];
+  const boundaryBuffer = Buffer.from(`--${boundary}`);
+  let index = buffer.indexOf(boundaryBuffer);
+  while (index !== -1) {
+    const nextIndex = buffer.indexOf(boundaryBuffer, index + boundaryBuffer.length);
+    if (nextIndex === -1) break;
+    const part = buffer.subarray(index + boundaryBuffer.length, nextIndex);
+    const headerEnd = part.indexOf(Buffer.from('\r\n\r\n'));
+    if (headerEnd !== -1) {
+      const headerStr = part.subarray(0, headerEnd).toString('utf-8');
+      let body = part.subarray(headerEnd + 4);
+      if (body.length >= 2 && body[body.length - 2] === 13 && body[body.length - 1] === 10) {
+        body = body.subarray(0, body.length - 2);
+      }
+      const nameMatch = headerStr.match(/name="([^"]+)"/);
+      const filenameMatch = headerStr.match(/filename="([^"]+)"/);
+      if (nameMatch) {
+        parts.push({
+          name: nameMatch[1],
+          filename: filenameMatch ? filenameMatch[1] : undefined,
+          data: body
+        });
+      }
+    }
+    index = nextIndex;
+  }
+  return parts;
+}
+
+app.post("/api/import/gpx-tcx", (req: any, res: any) => {
+  const chunks: Buffer[] = [];
+  req.on("data", (chunk: Buffer) => {
+    chunks.push(chunk);
+  });
+  req.on("end", async () => {
+    try {
+      const contentType = req.headers["content-type"] || "";
+      if (!contentType.includes("multipart/form-data")) {
+        return res.status(400).json({ error: "Formato de requisição inválido. Deve ser multipart/form-data." });
+      }
+      const boundaryMatch = contentType.match(/boundary=([^;]+)/);
+      if (!boundaryMatch) {
+        return res.status(400).json({ error: "Boundary multipart não encontrado." });
+      }
+      const boundary = boundaryMatch[1];
+      const buffer = Buffer.concat(chunks);
+      const parts = parseMultipart(buffer, boundary);
+      const filePart = parts.find(p => p.filename);
+      const userIdPart = parts.find(p => p.name === "userId");
+      const confirmPart = parts.find(p => p.name === "confirm");
+      if (!filePart) {
+        return res.status(400).json({ error: "Nenhum arquivo enviado." });
+      }
+      if (!userIdPart) {
+        return res.status(400).json({ error: "Identificador de usuário (userId) obrigatório." });
+      }
+      const userId = userIdPart.data.toString("utf8").trim();
+      const confirm = confirmPart ? confirmPart.data.toString("utf8").trim() === "true" : false;
+      if (filePart.data.length > 10 * 1024 * 1024) {
+        return res.status(400).json({ error: "O tamanho do arquivo excede o limite de 10MB." });
+      }
+      const filename = filePart.filename || "";
+      const ext = filename.split(".").pop()?.toLowerCase();
+      if (ext !== "gpx" && ext !== "tcx") {
+        return res.status(400).json({ error: "Formato de arquivo inválido. Apenas .gpx e .tcx são suportados." });
+      }
+      if (req.idToken && userId) {
+        try {
+          await syncUserFromFirestore(userId, req.idToken);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      const dbData = readDB();
+      const user = dbData.users.find((u: any) => u.id === userId);
+      if (!user) {
+        return res.status(404).json({ error: "Usuário não cadastrado." });
+      }
+      const xml = filePart.data.toString("utf8");
+      const isGPX = xml.includes("<gpx") || xml.includes("<trkpt") || ext === "gpx";
+      const isTCX = xml.includes("<TrainingCenterDatabase") || xml.includes("<Trackpoint") || ext === "tcx";
+      let parsedData;
+      try {
+        if (isGPX) {
+          parsedData = parseGPX(xml);
+        } else if (isTCX) {
+          parsedData = parseTCX(xml);
+        } else {
+          return res.status(400).json({ error: "Não foi possível determinar o formato do arquivo (GPX ou TCX)." });
+        }
+      } catch (parseErr: any) {
+        return res.status(400).json({ error: parseErr.message || "Erro ao processar o arquivo XML." });
+      }
+      const now = new Date();
+      const logDate = new Date(parsedData.timestamp);
+      const maxRetroDays = 14;
+      const maxHistoryCutoff = now.getTime() - maxRetroDays * 24 * 60 * 60 * 1000;
+      if (logDate.getTime() < maxHistoryCutoff) {
+        return res.status(400).json({ error: `Registros retroativos são limitados a no máximo ${maxRetroDays} dias.` });
+      }
+      if (logDate.getTime() > now.getTime() + 12 * 60 * 60 * 1000) {
+        return res.status(400).json({ error: "Não é permitido registrar atividades em datas futuras." });
+      }
+      const durationMins = parsedData.minutes;
+      const points = durationMins >= 20 ? 2 : 0;
+      const activityId = "act-" + Math.random().toString(36).substring(2, 11);
+      const activity: any = {
+        id: activityId,
+        userId,
+        type: "exercise",
+        category: parsedData.category,
+        subType: parsedData.subType,
+        minutes: durationMins,
+        distanceKm: parsedData.distanceKm,
+        calories: parsedData.calories,
+        heartRate: parsedData.heartRate,
+        heartRateAvg: parsedData.heartRate,
+        timestamp: parsedData.timestamp,
+        points,
+        notes: `Importado de arquivo ${isGPX ? "GPX" : "TCX"}. ${parsedData.distanceKm}km, ${parsedData.calories}kcal.`,
+        sourceDevice: isGPX ? "gpx_import" : "tcx_import",
+        verified: true
+      };
+      if (confirm) {
+        if (!dbData.activities) dbData.activities = [];
+        dbData.activities.push(activity);
+        writeDB(dbData, req.idToken);
+        return res.json({ success: true, activity, count: 1 });
+      } else {
+        return res.json({ success: true, activity, count: 1 });
+      }
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ error: "Erro interno no servidor ao processar arquivo." });
+    }
+  });
+});
+
 // REMINDERS & AGENDA REST ENDPOINTS
 app.get("/api/reminders", async (req: any, res) => {
   const { userId } = req.query;

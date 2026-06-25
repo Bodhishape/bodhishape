@@ -104,6 +104,10 @@ export default function ActivityLogger({
 
   // Favorites System
   const [favorites, setFavorites] = useState<string[]>([]);
+  const [importedFile, setImportedFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<any | null>(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
 
   // Open / Close Quick registration view
   const [showQuickLog, setShowQuickLog] = useState<boolean>(false);
@@ -644,6 +648,66 @@ export default function ActivityLogger({
     setSelectedSubtype(act.subType);
     setNotes(`Importado com fôlego através do ${act.app.toUpperCase()}`);
     setImportedActivities((prev) => prev.filter((i) => i.id !== act.id));
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportedFile(file);
+    setImportResult(null);
+    setImportLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("userId", currentUserId);
+      const res = await fetch("/api/import/gpx-tcx", {
+        method: "POST",
+        body: formData
+      });
+      const data = await res.json();
+      if (res.ok && data.activity) {
+        setImportPreview(data.activity);
+        setImportResult(null);
+      } else {
+        setLocalErrorMsg(data.error || "Erro ao processar arquivo");
+      }
+    } catch (err) {
+      setLocalErrorMsg("Erro de conexão ao importar arquivo");
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const handleConfirmImport = async () => {
+    if (!importPreview) return;
+    setImportLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", importedFile!);
+      formData.append("userId", currentUserId);
+      formData.append("confirm", "true");
+      const res = await fetch("/api/import/gpx-tcx", {
+        method: "POST",
+        body: formData
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setImportResult(`✅ Atividade importada: ${data.activity.distanceKm}km em ${data.activity.minutes}min`);
+        setImportPreview(null);
+        setImportedFile(null);
+        if (onLogActivity) {
+          onLogActivity({ type: "exercise" } as any);
+        }
+        const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+        if (fileInput) fileInput.value = "";
+      } else {
+        setLocalErrorMsg(data.error || "Erro ao confirmar importação");
+      }
+    } catch (err) {
+      setLocalErrorMsg("Erro de conexão");
+    } finally {
+      setImportLoading(false);
+    }
   };
 
   const handleLogSubmit = (e: React.FormEvent) => {
@@ -1920,6 +1984,53 @@ export default function ActivityLogger({
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-slate-950/30 border border-emerald-900/30 rounded-2xl p-4 space-y-3 mt-4">
+          <h4 className="text-xs font-bold text-emerald-400 font-heading flex items-center gap-2">
+            📂 Importar GPX / TCX
+          </h4>
+          <p className="text-[10px] text-slate-400">
+            Faça upload de arquivos de atividade exportados do seu relógio ou app (Strava, Garmin, etc.)
+          </p>
+          
+          <input
+            type="file"
+            accept=".gpx,.tcx"
+            onChange={handleFileSelect}
+            className="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-emerald-600 file:text-white file:text-xs file:font-bold hover:file:bg-emerald-700 file:cursor-pointer"
+          />
+          
+          {importPreview && (
+            <div className="bg-slate-900 rounded-xl p-3 border border-slate-800 space-y-2">
+              <div className="flex justify-between text-xs text-slate-300">
+                <span>📏 Distância: <strong>{importPreview.distanceKm} km</strong></span>
+                <span>⏱️ Duração: <strong>{importPreview.minutes} min</strong></span>
+              </div>
+              <div className="flex justify-between text-xs text-slate-300">
+                <span>🔥 Calorias: <strong>{importPreview.calories}</strong></span>
+                <span>❤️ FC: <strong>{importPreview.heartRate || "—"} bpm</strong></span>
+              </div>
+              <div className="flex justify-between text-xs text-slate-300">
+                <span>🏷️ Tipo: <strong>{importPreview.category}</strong></span>
+                <span>📅 {new Date(importPreview.timestamp).toLocaleDateString("pt-BR")}</span>
+              </div>
+              
+              <button
+                onClick={handleConfirmImport}
+                disabled={importLoading}
+                className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 text-white font-bold text-xs rounded-xl transition"
+              >
+                {importLoading ? "Importando..." : "✅ Confirmar Importação"}
+              </button>
+            </div>
+          )}
+          
+          {importResult && (
+            <div className="text-xs text-emerald-400 bg-emerald-950/20 border border-emerald-900/30 rounded-lg p-2">
+              {importResult}
             </div>
           )}
         </div>
