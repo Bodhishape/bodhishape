@@ -3065,6 +3065,122 @@ app.post("/api/communities/:id/leave", (req, res) => {
   res.json({ success: true, community: comm });
 });
 
+// GET /api/communities/:id/ranking
+app.get("/api/communities/:id/ranking", (req: any, res: any) => {
+  const { id } = req.params;
+  const dbData = readDB();
+  const comm = dbData.communities.find((c: any) => c.id === id);
+  if (!comm) return res.status(404).json({ error: "Desafio não encontrado." });
+
+  const participants = comm.participants || [];
+  const start = comm.startDate ? new Date(comm.startDate + "T00:00:00") : new Date("2020-01-01");
+  const end = comm.endDate ? new Date(comm.endDate + "T23:59:59") : new Date("2030-12-31");
+  const allowed = comm.enabledActivities || ["gongyo", "daimoku", "exercise"];
+
+  const ranking = participants.map((uid: string) => {
+    const user = dbData.users.find((u: any) => u.id === uid);
+    const userActs = (dbData.activities || []).filter((a: any) => {
+      const aTime = new Date(a.timestamp);
+      if (a.userId !== uid || aTime < start || aTime > end) return false;
+      const activityType = a.type as string;
+      if (activityType.startsWith("gongyo") && allowed.includes("gongyo")) return true;
+      if (activityType === "daimoku" && allowed.includes("daimoku")) return true;
+      if (activityType === "exercise" && allowed.includes("exercise")) return true;
+      if (activityType === "bs" && allowed.includes("bs")) return true;
+      if (activityType === "kofu" && allowed.includes("kofu")) return true;
+      return false;
+    });
+
+    const totalPoints = userActs.reduce((s: number, a: any) => {
+      let actPts = a.points || 0;
+      if (a.type === "gongyo_morning" && comm.gongyoMorningPoints !== undefined) {
+        actPts = comm.gongyoMorningPoints;
+      } else if (a.type === "gongyo_evening" && comm.gongyoEveningPoints !== undefined) {
+        actPts = comm.gongyoEveningPoints;
+      } else if (a.type === "daimoku" && comm.daimokuPoints !== undefined) {
+        const segments = Math.max(1, Math.floor((a.minutes || 30) / 30));
+        actPts = segments * comm.daimokuPoints;
+      } else if (a.type === "exercise" && comm.exercisePoints !== undefined) {
+        actPts = comm.exercisePoints;
+      }
+      return s + actPts;
+    }, 0);
+
+    const totalDaimokuMin = userActs.filter((a: any) => a.type === "daimoku").reduce((s: number, a: any) => s + (a.minutes || 0), 0);
+    const totalExerciseMin = userActs.filter((a: any) => a.type === "exercise").reduce((s: number, a: any) => s + (a.minutes || 0), 0);
+    const gongyoCount = userActs.filter((a: any) => a.type === "gongyo_morning" || a.type === "gongyo_evening").length;
+    const streak = user?.streak || 0;
+
+    return {
+      userId: uid,
+      name: user?.displayName || user?.name || "Desconhecido",
+      avatar: user?.avatar || "",
+      division: user?.division || "",
+      region: user?.region || "",
+      totalPoints,
+      totalDaimokuMin,
+      totalExerciseMin,
+      gongyoCount,
+      streak,
+      activitiesCount: userActs.length
+    };
+  });
+
+  ranking.sort((a: any, b: any) => b.totalPoints - a.totalPoints);
+  res.json(ranking);
+});
+
+// POST /api/communities/:id/update
+app.post("/api/communities/:id/update", (req: any, res: any) => {
+  const { id } = req.params;
+  const { userId, name, description, rules, enabledActivities, cover, startDate, endDate, prize, privacy, customSubgroups } = req.body;
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) return res.status(404).json({ error: "Desafio não encontrado." });
+  const comm = dbData.communities[index];
+  if (comm.creatorId !== userId) return res.status(403).json({ error: "Apenas o criador pode editar." });
+  if (name !== undefined) comm.name = name;
+  if (description !== undefined) comm.description = description;
+  if (rules !== undefined) comm.rules = rules;
+  if (enabledActivities !== undefined) comm.enabledActivities = enabledActivities;
+  if (cover !== undefined) comm.cover = cover;
+  if (startDate !== undefined) comm.startDate = startDate;
+  if (endDate !== undefined) comm.endDate = endDate;
+  if (prize !== undefined) comm.prize = prize;
+  if (privacy !== undefined) comm.privacy = privacy;
+  if (customSubgroups !== undefined) comm.customSubgroups = customSubgroups;
+  dbData.communities[index] = comm;
+  writeDB(dbData, req.idToken);
+  res.json(comm);
+});
+
+// POST /api/communities/:id/kick
+app.post("/api/communities/:id/kick", (req: any, res: any) => {
+  const { id } = req.params;
+  const { userId, targetUserId } = req.body;
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) return res.status(404).json({ error: "Desafio não encontrado." });
+  const comm = dbData.communities[index];
+  if (comm.creatorId !== userId) return res.status(403).json({ error: "Apenas o criador pode remover membros." });
+  comm.participants = (comm.participants || []).filter((uid: string) => uid !== targetUserId);
+  comm.membersCount = comm.participants.length;
+  dbData.communities[index] = comm;
+  writeDB(dbData, req.idToken);
+  res.json({ success: true, community: comm });
+});
+
+// GET /api/communities/:id/feed
+app.get("/api/communities/:id/feed", (req: any, res: any) => {
+  const { id } = req.params;
+  const dbData = readDB();
+  const comm = dbData.communities.find((c: any) => c.id === id);
+  if (!comm) return res.status(404).json({ error: "Desafio não encontrado." });
+  const memberIds = comm.participants || [];
+  const memberPosts = (dbData.posts || []).filter((p: any) => memberIds.includes(p.userId));
+  res.json(memberPosts);
+});
+
 // Community Notices / Mural de Avisos endpoints
 app.get("/api/notices", (req: any, res: any) => {
   const dbData = readDB();

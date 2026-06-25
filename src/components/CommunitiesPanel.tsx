@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { 
   Plus, Users, Shield, Check, Layers, Sparkles, BookOpen, Dumbbell, Zap, 
-  MessageSquare, Send, Trophy, ArrowLeft, Share2, QrCode, Lock, Key, 
+  MessageSquare, Send, Trophy, ArrowLeft, Share2, QrCode, Lock, Key, Edit,
   Calendar, Award, Globe, Mail, Eye, Pin, PinOff, Smile, Camera, 
   ThumbsUp, BarChart, TrendingUp, AlertCircle, X, ChevronRight, CheckCircle2,
   MapPin, Copy, Link
@@ -81,6 +81,18 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
   // Selection of active challenge
   const [selectedChallenge, setSelectedChallenge] = useState<any | null>(null);
 
+  // Community ranking states
+  const [communityRanking, setCommunityRanking] = useState<any[]>([]);
+  const [rankingLoading, setRankingLoading] = useState(false);
+  const [rankingView, setRankingView] = useState<"general" | "subgroups">("general");
+
+  // Community feed states
+  const [communityFeed, setCommunityFeed] = useState<any[]>([]);
+  const [feedLoading, setFeedLoading] = useState(false);
+
+  // Edit community states
+  const [isEditing, setIsEditing] = useState(false);
+
   // Prevent duplicate join handling from causing render loops
   const joinProcessedRef = useRef(false);
 
@@ -152,6 +164,50 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
     const interval = setInterval(fetchChatMessages, 4000);
     return () => clearInterval(interval);
   }, [selectedChallenge?.id]);
+
+  // Sync real-time challenge ranking from backend
+  useEffect(() => {
+    if (!selectedChallenge || activeTab !== "ranking") return;
+    const fetchRanking = async () => {
+      setRankingLoading(true);
+      try {
+        const res = await fetch(`/api/communities/${selectedChallenge.id}/ranking`);
+        if (res.ok) {
+          const data = await res.json();
+          setCommunityRanking(data);
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setRankingLoading(false);
+      }
+    };
+    fetchRanking();
+    const interval = setInterval(fetchRanking, 15000);
+    return () => clearInterval(interval);
+  }, [selectedChallenge?.id, activeTab]);
+
+  // Sync real-time challenge feed from backend
+  useEffect(() => {
+    if (!selectedChallenge || activeTab !== "feed") return;
+    const fetchFeed = async () => {
+      setFeedLoading(true);
+      try {
+        const res = await fetch(`/api/communities/${selectedChallenge.id}/feed`);
+        if (res.ok) {
+          const data = await res.json();
+          setCommunityFeed(data);
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setFeedLoading(false);
+      }
+    };
+    fetchFeed();
+    const interval = setInterval(fetchFeed, 15000);
+    return () => clearInterval(interval);
+  }, [selectedChallenge?.id, activeTab]);
 
   const isAllowedRegion = (regionStr: string) => {
     if (!regionStr) return false;
@@ -347,6 +403,103 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
     setCover("");
     setCustomSubgroupsInput("");
     setShowForm(false);
+  };
+
+  const handleEditChallenge = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedChallenge || !currentUser || !name.trim()) return;
+
+    const parsedSubgroups = customSubgroupsInput.trim()
+      ? customSubgroupsInput.split(",").map(s => s.trim()).filter(s => s.length > 0)
+      : [];
+
+    const payload = {
+      userId: currentUser.id,
+      name,
+      description,
+      rules: rules || "Incentivo e respeito incondicional.",
+      enabledActivities: activitiesSelected,
+      cover: cover || availableCovers[0].url,
+      startDate,
+      endDate,
+      prize,
+      privacy,
+      gongyoMorningPoints,
+      gongyoEveningPoints,
+      daimokuPoints,
+      exercisePoints,
+      customSubgroups: parsedSubgroups
+    };
+
+    try {
+      const res = await fetch(`/api/communities/${selectedChallenge.id}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        const updatedComm = await res.json();
+        setSelectedChallenge(updatedComm);
+        setLocalCommunities(prevComms => 
+          prevComms.map(c => c.id === updatedComm.id ? updatedComm : c)
+        );
+        setIsEditing(false);
+      } else {
+        const err = await res.json();
+        alert(err.error || "Erro ao atualizar desafio.");
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleKickMember = async (targetUserId: string) => {
+    if (!selectedChallenge || !currentUser) return;
+    if (!window.confirm("Tem certeza que deseja remover este participante do desafio?")) return;
+    try {
+      const res = await fetch(`/api/communities/${selectedChallenge.id}/kick`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: currentUser.id,
+          targetUserId
+        })
+      });
+      if (res.ok) {
+        // Re-fetch ranking immediately
+        const rRes = await fetch(`/api/communities/${selectedChallenge.id}/ranking`);
+        if (rRes.ok) {
+          setCommunityRanking(await rRes.json());
+        }
+        setSelectedChallenge((prev: any) => {
+          if (!prev) return null;
+          const nextParticipants = (prev.participants || []).filter((uid: string) => uid !== targetUserId);
+          return {
+            ...prev,
+            participants: nextParticipants,
+            membersCount: nextParticipants.length
+          };
+        });
+        setLocalCommunities(prevComms => 
+          prevComms.map(c => {
+            if (c.id === selectedChallenge.id) {
+              const nextParts = (c.participants || []).filter((uid: string) => uid !== targetUserId);
+              return {
+                ...c,
+                participants: nextParts,
+                membersCount: nextParts.length
+              };
+            }
+            return c;
+          })
+        );
+      } else {
+        const err = await res.json();
+        alert(err.error || "Erro ao remover membro.");
+      }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const handleUnlockPrivateGroupByCode = (e: React.FormEvent) => {
@@ -983,6 +1136,265 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
         </motion.div>
       )}
 
+      {/* EDIT CHALLENGE FORM MODAL */}
+      {isEditing && selectedChallenge && (
+        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl max-w-2xl w-full text-left space-y-5 my-8"
+            id="edit-challenge-form-wrapper"
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-black font-heading text-slate-100 flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-indigo-400" />
+                Editar Desafio: {selectedChallenge.name}
+              </h3>
+              <button 
+                onClick={() => setIsEditing(false)}
+                className="p-1 hover:bg-slate-800 rounded-lg text-slate-500 hover:text-slate-250 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditChallenge} className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">🏷️ Nome da Missão / Desafio:</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Força e Constância 60 Dias"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    required
+                    className="w-full text-xs border border-slate-800 px-3 py-2.5 bg-slate-950/60 text-slate-101 rounded-xl outline-none focus:border-indigo-505"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">📝 Objetivo geral do Desafio:</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Fomentar o foco do treino matinal e minutos daimoku."
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    required
+                    className="w-full text-xs border border-slate-800 px-3 py-2.5 bg-slate-950/60 text-slate-101 rounded-xl outline-none focus:border-indigo-505"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">🗓️ Data de Início da Campanha:</label>
+                  <input 
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    required
+                    className="w-full text-xs border border-slate-800 px-3 py-2 bg-slate-950/60 text-slate-101 rounded-xl outline-none font-mono focus:border-indigo-505"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">🗓️ Encerramento da Campanha:</label>
+                  <input 
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    required
+                    className="w-full text-xs border border-slate-800 px-3 py-2 bg-slate-950/60 text-slate-101 rounded-xl outline-none font-mono focus:border-indigo-505"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">🏆 Premiação Exibida na Conclusão:</label>
+                  <input 
+                    type="text"
+                    placeholder="Ex: Certificado Bodhi + 200 Karma Points"
+                    value={prize}
+                    onChange={(e) => setPrize(e.target.value)}
+                    required
+                    className="w-full text-xs border border-slate-800 px-3 py-2 bg-slate-950/60 text-slate-101 rounded-xl outline-none focus:border-indigo-505"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">🔒 Política de Privacidade:</label>
+                  <select 
+                    value={privacy}
+                    onChange={(e) => setPrivacy(e.target.value as any)}
+                    className="w-full text-xs border border-slate-800 px-3 py-2.5 bg-slate-950/60 text-slate-101 rounded-xl outline-none focus:border-indigo-505"
+                  >
+                    <option value="public">Global Pública (Qualquer membro pode buscar e entrar)</option>
+                    <option value="private">Missão Privada (Requer código de convite para acessar)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1.5 text-left">
+                <label className="text-[10px] uppercase font-bold text-slate-400 block">📋 Regras Detalhadas e Acordos:</label>
+                <textarea
+                  placeholder="Ex: Diariamente registrar Daimoku. Exercícios mínimos de 30 minutos..."
+                  value={rules}
+                  onChange={(e) => setRules(e.target.value)}
+                  className="w-full h-20 text-xs border border-slate-800 p-3 bg-slate-950/60 text-slate-101 rounded-xl outline-none focus:border-indigo-505 resize-none leading-relaxed"
+                />
+              </div>
+
+              {/* Seletor de Hábitos Permitidos */}
+              <div className="bg-slate-950/20 p-4 rounded-2xl border border-slate-850 space-y-3">
+                <div>
+                  <h4 className="text-[10px] uppercase font-black text-indigo-400 block font-heading">⚡ Atividades Contabilizadas neste Desafio:</h4>
+                  <p className="text-[9px] text-slate-500 mt-0.5">Selecione quais registros somarão pontos para a classificação deste desafio.</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: "gongyo", label: "🪷 Gongyo (Manhã e Noite)", icon: Shield },
+                    { id: "daimoku", label: "🔥 Daimoku (Minutos)", icon: Zap },
+                    { id: "exercise", label: "💪 Exercícios Físicos", icon: Dumbbell },
+                    { id: "bs", label: "📰 Bloco de Estudo (BS/Dezembro)", icon: BookOpen },
+                    { id: "kofu", label: "💰 Contribuição Kofu / Gratidão", icon: Award }
+                  ].map((act) => {
+                    const isSelected = activitiesSelected.includes(act.id);
+                    return (
+                      <button
+                        key={act.id}
+                        type="button"
+                        onClick={() => toggleActivitySelection(act.id)}
+                        className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-semibold text-left transition ${
+                          isSelected 
+                            ? "bg-indigo-650/15 border-indigo-500/30 text-indigo-300 shadow-sm cursor-pointer"
+                            : "bg-slate-950/40 border-slate-850 text-slate-450 hover:text-slate-300 cursor-pointer"
+                        }`}
+                      >
+                        <act.icon className={`w-4 h-4 shrink-0 ${isSelected ? "text-indigo-400" : "text-slate-600"}`} />
+                        <span className="truncate">{act.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Custom Weights Configuration */}
+                <div className="pt-2 border-t border-slate-850/60 grid grid-cols-2 gap-3 text-left">
+                  {activitiesSelected.includes("gongyo") && (
+                    <>
+                      <div>
+                        <label className="text-[9px] uppercase font-bold text-slate-450 block mb-1">🪷 Gongyo Manhã (Pts):</label>
+                        <input 
+                          type="number" 
+                          min="1" 
+                          max="10" 
+                          value={gongyoMorningPoints} 
+                          onChange={(e) => setGongyoMorningPoints(Math.max(1, Number(e.target.value)))}
+                          className="w-full text-xs border border-slate-800 px-2 py-1.5 bg-slate-950 text-amber-400 rounded-lg outline-none font-mono font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] uppercase font-bold text-slate-450 block mb-1">🪷 Gongyo Noite (Pts):</label>
+                        <input 
+                          type="number" 
+                          min="1" 
+                          max="10" 
+                          value={gongyoEveningPoints} 
+                          onChange={(e) => setGongyoEveningPoints(Math.max(1, Number(e.target.value)))}
+                          className="w-full text-xs border border-slate-800 px-2 py-1.5 bg-slate-950 text-amber-400 rounded-lg outline-none font-mono font-bold"
+                        />
+                      </div>
+                    </>
+                  )}
+                  {activitiesSelected.includes("daimoku") && (
+                    <div>
+                      <label className="text-[9px] uppercase font-bold text-slate-450 block mb-1">🔥 Daimoku (Pts/30m):</label>
+                      <input 
+                        type="number" 
+                        min="1" 
+                        max="10" 
+                        value={daimokuPoints} 
+                        onChange={(e) => setDaimokuPoints(Math.max(1, Number(e.target.value)))}
+                        className="w-full text-xs border border-slate-800 px-2 py-1.5 bg-slate-950 text-amber-400 rounded-lg outline-none font-mono font-bold"
+                      />
+                    </div>
+                  )}
+                  {activitiesSelected.includes("exercise") && (
+                    <div>
+                      <label className="text-[9px] uppercase font-bold text-slate-450 block mb-1">💪 Exercício (Pts/Treino):</label>
+                      <input 
+                        type="number" 
+                        min="1" 
+                        max="10" 
+                        value={exercisePoints} 
+                        onChange={(e) => setExercisePoints(Math.max(1, Number(e.target.value)))}
+                        className="w-full text-xs border border-slate-800 px-2 py-1.5 bg-slate-950 text-amber-400 rounded-lg outline-none font-mono font-bold"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Custom Subgroups / Teams */}
+              <div className="space-y-1 bg-slate-950/20 p-3 rounded-2xl border border-slate-850/60 text-left">
+                <label className="text-[10px] uppercase font-black text-indigo-400 block font-heading">📍 Subgrupos ou Equipes da Comunidade:</label>
+                <input 
+                  type="text"
+                  placeholder="Exemplo: Equipe Azul, Equipe Vermelha, Equipe Verde"
+                  value={customSubgroupsInput}
+                  onChange={(e) => setCustomSubgroupsInput(e.target.value)}
+                  className="w-full text-xs border border-slate-800 px-3 py-2 bg-slate-950/70 text-slate-101 rounded-xl outline-none focus:border-indigo-500/60 transition"
+                />
+                <span className="text-[9px] text-slate-550 block leading-tight mt-0.5">
+                  Utilize vírgula para separar os times. Se preenchido, um painel de classificação por equipe será ativado de forma exclusiva no desafio.
+                </span>
+              </div>
+
+              {/* Capas disponíveis */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] uppercase font-bold text-slate-400 block">🖼️ Imagem de Capa do Desafio:</label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {availableCovers.map((cov) => (
+                    <button
+                      key={cov.url}
+                      type="button"
+                      onClick={() => setCover(cov.url)}
+                      className={`relative h-14 rounded-lg overflow-hidden border-2 transition-all ${
+                        cover === cov.url || (!cover && cov.url === availableCovers[0].url)
+                          ? "border-amber-400 scale-102"
+                          : "border-transparent opacity-60"
+                      }`}
+                    >
+                      <img src={cov.url} alt={cov.name} className="w-full h-full object-cover bg-slate-950" />
+                      <span className="absolute bottom-0 inset-x-0 bg-black/50 text-[8px] text-slate-205 py-0.5 text-center truncate px-1">
+                        {cov.name}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsEditing(false)}
+                  className="px-4 py-2 text-slate-400 hover:text-slate-205 font-bold text-xs cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-indigo-650 hover:bg-indigo-600 text-white font-bold text-xs rounded-xl shadow cursor-pointer"
+                >
+                  Salvar Alterações 💾
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
       {/* DASHBOARD: MINHA COMUNIDADE HOME */}
       {!selectedChallenge && (
         <div className="space-y-8" id="minha-comunidade-dashboard-panels">
@@ -1303,11 +1715,39 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
                       onClick={() => {
                         setShowQrModalFor(selectedChallenge);
                       }}
-                      className="p-1 px-2.5 bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-850 text-slate-300 text-[9px] font-bold rounded-lg flex items-center gap-1 transition-all"
+                      className="p-1 px-2.5 bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-850 text-slate-300 text-[9px] font-bold rounded-lg flex items-center gap-1 transition-all cursor-pointer"
                     >
                       <QrCode className="w-3 h-3 text-purple-400" />
                       <span>QR Code</span>
                     </button>
+
+                    {/* Botão de Editar (só creator) */}
+                    {currentUser && selectedChallenge.creatorId === currentUser.id && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setName(selectedChallenge.name || "");
+                          setDescription(selectedChallenge.description || "");
+                          setRules(selectedChallenge.rules || "");
+                          setStartDate(selectedChallenge.startDate || "");
+                          setEndDate(selectedChallenge.endDate || "");
+                          setPrize(selectedChallenge.prize || "");
+                          setPrivacy(selectedChallenge.privacy || "public");
+                          setActivitiesSelected(selectedChallenge.enabledActivities || ["gongyo", "daimoku", "exercise"]);
+                          setGongyoMorningPoints(selectedChallenge.gongyoMorningPoints !== undefined ? selectedChallenge.gongyoMorningPoints : 1);
+                          setGongyoEveningPoints(selectedChallenge.gongyoEveningPoints !== undefined ? selectedChallenge.gongyoEveningPoints : 1);
+                          setDaimokuPoints(selectedChallenge.daimokuPoints !== undefined ? selectedChallenge.daimokuPoints : 1);
+                          setExercisePoints(selectedChallenge.exercisePoints !== undefined ? selectedChallenge.exercisePoints : 2);
+                          setCover(selectedChallenge.cover || "");
+                          setCustomSubgroupsInput(selectedChallenge.customSubgroups ? selectedChallenge.customSubgroups.join(", ") : "");
+                          setIsEditing(true);
+                        }}
+                        className="p-1 px-2.5 bg-indigo-950/40 border border-indigo-900/30 hover:border-indigo-800 hover:bg-indigo-900/50 text-indigo-300 text-[9px] font-bold rounded-lg flex items-center gap-1 transition-all cursor-pointer"
+                      >
+                        <Edit className="w-3 h-3 text-indigo-400" />
+                        <span>Editar Desafio</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1585,45 +2025,47 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
                   </div>
 
                   <div className="space-y-4">
-                    {challengeFeedList.map((post) => {
-                      const postUser = users?.find(u => u.id === post.userId);
-                      const finalPostUserName = postUser ? (postUser.displayName || postUser.name) : post.userName;
-                      const finalPostUserAvatar = postUser ? postUser.avatar : post.userAvatar;
-                      return (
-                        <div key={post.id} className="p-4 bg-slate-950/45 rounded-2xl border border-slate-850 flex gap-3 text-xs leading-relaxed">
-                          <img 
-                            src={finalPostUserAvatar} 
-                            alt={finalPostUserName} 
-                            className="w-10 h-10 rounded-full border border-slate-800 shrink-0 object-cover bg-slate-900"
-                          />
-                          <div className="space-y-1.5 flex-1 text-left">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <span className="font-extrabold text-slate-100 block">{finalPostUserName}</span>
-                              <span className="text-[9px] text-slate-550 leading-none">{post.userDivision} • {post.userRegion} • {post.timestamp}</span>
+                    {feedLoading ? (
+                      <p className="text-xs text-slate-400">Sincronizando feed do desafio...</p>
+                    ) : communityFeed.length === 0 ? (
+                      <p className="text-xs text-slate-500">Nenhuma postagem realizada por membros deste desafio ainda.</p>
+                    ) : (
+                      communityFeed.map((post: any) => {
+                        const postUser = users?.find(u => u.id === post.userId);
+                        const finalPostUserName = postUser ? (postUser.displayName || postUser.name) : post.userName;
+                        const finalPostUserAvatar = postUser ? postUser.avatar : post.userAvatar;
+                        return (
+                          <div key={post.id} className="p-4 bg-slate-950/45 rounded-2xl border border-slate-850 flex gap-3 text-xs leading-relaxed font-sans">
+                            <img 
+                              src={finalPostUserAvatar} 
+                              alt={finalPostUserName} 
+                              className="w-10 h-10 rounded-full border border-slate-800 shrink-0 object-cover bg-slate-900"
+                            />
+                            <div className="space-y-1.5 flex-1 text-left">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <span className="font-extrabold text-slate-100 block">{finalPostUserName}</span>
+                                  <span className="text-[9px] text-slate-550 leading-none">{post.userDivision || post.division} • {post.userRegion || post.region}</span>
+                                </div>
+                                <span className="bg-amber-500/15 border border-amber-500/20 text-amber-300 text-[9px] font-extrabold py-0.5 px-2 rounded-lg">
+                                  🏆 +{post.points} pontos
+                                </span>
+                              </div>
+                              
+                              <p className="text-slate-300 text-xs py-1 leading-normal">
+                                {post.content}
+                              </p>
+
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="bg-indigo-950/40 text-indigo-300 border border-indigo-900/30 text-[9px] px-2 py-0.5 rounded-lg font-mono">
+                                  ✓ {post.category}
+                                </span>
+                              </div>
                             </div>
-                            <span className="bg-amber-500/15 border border-amber-500/20 text-amber-300 text-[9px] font-extrabold py-0.5 px-2 rounded-lg">
-                              🏆 +{post.points} pontos hoje
-                            </span>
                           </div>
-                          
-                          <p className="text-slate-300 text-xs py-1 leading-normal font-sans">
-                            {post.content}
-                          </p>
-
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="bg-indigo-950/40 text-indigo-300 border border-indigo-900/30 text-[9px] px-2 py-0.5 rounded-lg font-mono">
-                              ✓ {post.category}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                    })}
-
-                    <div className="p-4 bg-slate-950/20 rounded-2xl border border-dashed border-slate-850 text-center text-slate-500 text-[11px] leading-relaxed select-none">
-                      ⚠️ O registro de novas atividades no gerador do menu principal publicará automaticamente nesta seção se você habilitar.
-                    </div>
+                        );
+                      })
+                    )}
                   </div>
                 </div>
               )}
@@ -1631,40 +2073,174 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
               {/* 🏆 CHALLENGE RANKING TAB */}
               {activeTab === "ranking" && (
                 <div className="space-y-4">
-                  <div className="text-left border-b border-slate-850 pb-2 mb-2">
-                    <h3 className="text-xs font-bold text-slate-450 uppercase tracking-widest block font-heading">Classificação Interna da Campanha</h3>
-                    <p className="text-[11px] text-slate-500">
-                      Pontos somados calculados de acordo com os hábitos limitados na regra: <span className="text-indigo-400 font-extrabold font-mono uppercase bg-indigo-505/10 px-2 py-0.5 rounded border border-indigo-500/10 inline-block">{selectedChallenge.enabledActivities.join(" • ")}</span>
-                    </p>
+                  <div className="text-left border-b border-slate-850 pb-2 mb-2 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-450 uppercase tracking-widest block font-heading">Classificação Interna da Campanha</h3>
+                      <p className="text-[11px] text-slate-500">
+                        Pontos somados calculados de acordo com os hábitos limitados na regra: <span className="text-indigo-400 font-extrabold font-mono uppercase bg-indigo-505/10 px-2 py-0.5 rounded border border-indigo-500/10 inline-block">{selectedChallenge.enabledActivities.join(" • ")}</span>
+                      </p>
+                    </div>
+
+                    {selectedChallenge.customSubgroups && selectedChallenge.customSubgroups.length > 0 && (
+                      <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-850 shrink-0">
+                        <button
+                          onClick={() => setRankingView("general")}
+                          className={`text-[10px] font-black px-3 py-1.5 rounded-lg transition-all ${
+                            rankingView === "general" 
+                              ? "bg-indigo-650 text-white" 
+                              : "text-slate-500 hover:text-slate-350"
+                          }`}
+                        >
+                          🏆 Geral
+                        </button>
+                        <button
+                          onClick={() => setRankingView("subgroups")}
+                          className={`text-[10px] font-black px-3 py-1.5 rounded-lg transition-all ${
+                            rankingView === "subgroups" 
+                              ? "bg-indigo-650 text-white" 
+                              : "text-slate-500 hover:text-slate-350"
+                          }`}
+                        >
+                          📍 Equipes
+                        </button>
+                      </div>
+                    )}
                   </div>
 
-                  <div className="bg-slate-950/30 rounded-2xl border border-slate-850 overflow-hidden divide-y divide-slate-850">
-                    {challengeRankingList.map((item, index) => {
-                      const isMe = item.user.id === currentUser?.id;
-                      return (
-                        <div key={item.user.id} className={`p-4 flex items-center justify-between text-xs font-medium transition ${isMe ? "bg-indigo-650/10" : ""}`}>
-                          <div className="flex items-center gap-3">
-                            <span className="w-5 text-center font-mono font-bold text-slate-550 text-xs">
-                              {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : index + 1}
-                            </span>
-                            <img
-                              src={item.user.avatar}
-                              alt={item.user.displayName || item.user.name}
-                              className="w-8 h-8 rounded-full object-cover bg-slate-950 border border-slate-800"
-                            />
-                            <div>
-                              <span className="font-extrabold text-slate-100 block">{item.user.displayName || item.user.name} {isMe ? "(Você)" : ""}</span>
-                              <span className="text-[9px] text-slate-500 block leading-none mt-0.5">{item.user.division} • {item.user.state} • {item.user.organization}</span>
+                  {rankingLoading && communityRanking.length === 0 ? (
+                    <p className="text-xs text-slate-400">Sincronizando classificação real-time...</p>
+                  ) : communityRanking.length === 0 ? (
+                    <p className="text-xs text-slate-500">Nenhuma atividade registrada por membros deste desafio no período ainda.</p>
+                  ) : rankingView === "general" || !selectedChallenge.customSubgroups || selectedChallenge.customSubgroups.length === 0 ? (
+                    <div className="bg-slate-950/30 rounded-2xl border border-slate-850 overflow-hidden divide-y divide-slate-850/60">
+                      {communityRanking.map((item: any, index: number) => {
+                        const isMe = item.userId === currentUser?.id;
+                        return (
+                          <div key={item.userId} className={`p-4 flex items-center justify-between text-xs font-medium transition ${isMe ? "bg-indigo-650/10" : ""}`}>
+                            <div className="flex items-center gap-3">
+                              <span className="w-5 text-center font-mono font-bold text-slate-550 text-xs">
+                                {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : index + 1}
+                              </span>
+                              <img
+                                src={item.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100"}
+                                alt={item.name}
+                                className="w-8 h-8 rounded-full object-cover bg-slate-950 border border-slate-800"
+                              />
+                              <div className="text-left font-sans">
+                                <span className="font-extrabold text-slate-100 block">
+                                  {item.name} {isMe ? "(Você)" : ""}
+                                </span>
+                                <span className="text-[9px] text-slate-550 block leading-tight mt-0.5">
+                                  {item.division} • {item.region}
+                                </span>
+                                <span className="text-[9px] text-slate-500 block leading-tight mt-1">
+                                  {item.gongyoCount > 0 && `🪷 ${item.gongyoCount} gongyo`}
+                                  {item.totalDaimokuMin > 0 && ` • 🔥 ${item.totalDaimokuMin}m daimoku`}
+                                  {item.totalExerciseMin > 0 && ` • 💪 ${item.totalExerciseMin}m treino`}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center">
+                              <div className="text-right">
+                                <span className="text-amber-400 font-mono font-black text-sm">{item.totalPoints} pts</span>
+                              </div>
+
+                              {currentUser && selectedChallenge.creatorId === currentUser.id && item.userId !== currentUser.id && (
+                                <button
+                                  onClick={() => handleKickMember(item.userId)}
+                                  title="Remover Membro"
+                                  className="p-1 hover:bg-red-500/10 rounded-lg text-slate-550 hover:text-red-400 transition cursor-pointer select-none ml-2"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              )}
                             </div>
                           </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      {selectedChallenge.customSubgroups.map((sub: string) => {
+                        const getUserSubgroup = (entry: any) => {
+                          const saved = localStorage.getItem(`soka_subgroup_${entry.userId}_${selectedChallenge.id}`);
+                          if (saved && selectedChallenge.customSubgroups.includes(saved)) return saved;
+                          const matched = selectedChallenge.customSubgroups.find((g: string) =>
+                            entry.region?.toLowerCase().includes(g.toLowerCase()) || 
+                            g.toLowerCase().includes(entry.region?.toLowerCase() || "") ||
+                            g.toLowerCase().includes(entry.division?.toLowerCase() || "")
+                          );
+                          return matched || selectedChallenge.customSubgroups[0];
+                        };
 
-                          <div className="text-right">
-                            <span className="text-amber-400 font-mono font-black text-sm">{item.points} pts</span>
+                        const subgroupMembers = communityRanking.filter(entry => getUserSubgroup(entry) === sub);
+                        const subTotalPoints = subgroupMembers.reduce((sum, item) => sum + item.totalPoints, 0);
+
+                        return (
+                          <div key={sub} className="bg-slate-900/40 rounded-2xl border border-slate-850 overflow-hidden">
+                            <div className="px-4 py-3 bg-slate-950/80 border-b border-slate-850/60 flex items-center justify-between">
+                              <h4 className="text-xs font-black font-heading text-indigo-400 flex items-center gap-1.5 uppercase tracking-wider">
+                                <MapPin className="w-4 h-4 text-indigo-500" />
+                                {sub}
+                              </h4>
+                              <span className="text-[10px] font-bold font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                                Total: {subTotalPoints} pts
+                              </span>
+                            </div>
+
+                            {subgroupMembers.length === 0 ? (
+                              <p className="p-4 text-[11px] text-slate-500 text-center">Nenhum participante associado a esta equipe ainda.</p>
+                            ) : (
+                              <div className="divide-y divide-slate-850/40">
+                                {subgroupMembers.map((item: any, index: number) => {
+                                  const isMe = item.userId === currentUser?.id;
+                                  return (
+                                    <div key={item.userId} className={`p-4 flex items-center justify-between text-xs font-medium transition ${isMe ? "bg-indigo-650/10" : ""}`}>
+                                      <div className="flex items-center gap-3">
+                                        <span className="w-5 text-center font-mono font-bold text-slate-550 text-xs">
+                                          {index + 1}
+                                        </span>
+                                        <img
+                                          src={item.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100"}
+                                          alt={item.name}
+                                          className="w-8 h-8 rounded-full object-cover bg-slate-950 border border-slate-800"
+                                        />
+                                        <div className="text-left font-sans">
+                                          <span className="font-extrabold text-slate-101 block">
+                                            {item.name} {isMe ? "(Você)" : ""}
+                                          </span>
+                                          <span className="text-[9px] text-slate-550 block leading-tight mt-0.5">
+                                            {item.division} • {item.region}
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      <div className="flex items-center">
+                                        <div className="text-right">
+                                          <span className="text-amber-400 font-mono font-black text-sm">{item.totalPoints} pts</span>
+                                        </div>
+
+                                        {currentUser && selectedChallenge.creatorId === currentUser.id && item.userId !== currentUser.id && (
+                                          <button
+                                            onClick={() => handleKickMember(item.userId)}
+                                            title="Remover Membro"
+                                            className="p-1 hover:bg-red-500/10 rounded-lg text-slate-550 hover:text-red-400 transition cursor-pointer select-none ml-2"
+                                          >
+                                            <X className="w-4 h-4" />
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
