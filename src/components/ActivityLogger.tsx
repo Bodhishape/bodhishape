@@ -16,6 +16,24 @@ interface ActivityLoggerProps {
     exerciseType?: string;
     notes?: string;
     customTimestamp?: string;
+    distanceKm?: number;
+    calories?: number;
+    steps?: number;
+    heartRateAvg?: number;
+    heartRateMax?: number;
+    pace?: number;
+    speedAvg?: number;
+    weightUsed?: number;
+    sets?: number;
+    reps?: number;
+    photos?: string[];
+    videos?: string[];
+    location?: string | { lat: number, lng: number, address?: string };
+    sourceDevice?: string;
+    sourceApp?: string;
+    gpxUrl?: string;
+    tcxUrl?: string;
+    [key: string]: any;
   }) => void;
   errorMsg: string | null;
   successMsg: string | null;
@@ -111,84 +129,78 @@ export default function ActivityLogger({
   }, []);
 
   // Setup visual categories listing matching the Comprehensive Exercise Library blueprint
-  const exerciseLibrary: VisualCategory[] = [
-    {
-      id: "lib-strength",
-      label: "🏋️ Musculação e Força",
-      backendCategory: "Musculação",
-      subtypes: ["Musculação", "Treino Livre", "Treino em Casa", "Calistenia", "Powerlifting", "Levantamento Olímpico", "Treino Funcional", "Cross Training", "Strongman"]
-    },
-    {
-      id: "lib-running",
-      label: "🏃 Corrida e Caminhada",
-      backendCategory: "Corrida",
-      subtypes: ["Caminhada", "Corrida", "Corrida em Esteira", "Corrida de Rua", "Trail Running", "Caminhada na Praia", "Caminhada em Trilha"]
-    },
-    {
-      id: "lib-cycling",
-      label: "🚴 Ciclismo",
-      backendCategory: "Ciclismo",
-      subtypes: ["Bicicleta", "Mountain Bike", "Speed", "Bike Indoor", "Spinning"]
-    },
-    {
-      id: "lib-aquatic",
-      label: "🏊 Esportes Aquáticos",
-      backendCategory: "Aquáticos",
-      subtypes: ["Natação", "Hidroginástica", "Remo", "Stand Up Paddle", "Surf", "Canoagem"]
-    },
-    {
-      id: "lib-teams",
-      label: "⚽ Esportes Coletivos",
-      backendCategory: "Esportes",
-      subtypes: ["Futebol", "Futsal", "Society", "Basquete", "Vôlei", "Handebol", "Rugby", "Beisebol", "Softbol"]
-    },
-    {
-      id: "lib-rackets",
-      label: "🎾 Esportes de Raquete",
-      backendCategory: "Esportes",
-      subtypes: ["Tênis", "Beach Tennis", "Tênis de Mesa", "Badminton", "Squash", "Pickleball"]
-    },
-    {
-      id: "lib-marcial",
-      label: "🥋 Artes Marciais",
-      backendCategory: "Artes Marciais",
-      subtypes: ["Judô", "Karatê", "Jiu-Jitsu", "Taekwondo", "Muay Thai", "Boxe", "Kickboxing", "Kung Fu", "Capoeira", "Krav Maga"]
-    },
-    {
-      id: "lib-dance",
-      label: "💃 Dança",
-      backendCategory: "Dança",
-      subtypes: ["Dança", "Ballet", "Forró", "Zumba", "Dança de Salão", "Hip Hop", "Danças Urbanas"]
-    },
-    {
-      id: "lib-wellness",
-      label: "🧘 Bem-estar e Mobilidade",
-      backendCategory: "Bem-estar",
-      subtypes: ["Yoga", "Alongamento", "Pilates", "Mobilidade", "Meditação Ativa", "Tai Chi Chuan"]
-    },
-    {
-      id: "lib-outdoor",
-      label: "⛰️ Atividades Outdoor",
-      backendCategory: "Outro",
-      subtypes: ["Trilha", "Escalada", "Trekking", "Rapel", "Montanhismo"]
-    },
-    {
-      id: "lib-senior",
-      label: "👵 Atividades Adaptadas (Qualquer Idade)",
-      backendCategory: "Outro",
-      subtypes: ["Caminhada Leve", "Alongamento", "Ginástica Funcional", "Hidroginástica", "Exercícios Adaptados"]
-    },
-    {
-      id: "lib-other",
-      label: "➕ Outros",
-      backendCategory: "Outro",
-      subtypes: ["Aula experimental", "Atividade recreativa", "Modalidade regional", "Daimoku Caminhando", "Outro esporte não listado"]
-    }
-  ];
+  const [exerciseLibrary, setExerciseLibrary] = useState<VisualCategory[]>([
+    { id: "strength", label: "🏋️ Musculação e Força", backendCategory: "Musculação", subtypes: ["Musculação Tradicional", "Hipertrofia", "Força", "Powerlifting", "Levantamento Olímpico", "Treino Funcional", "Cross Training", "CrossFit", "Calistenia", "Street Workout", "Treino em Circuito", "Treino Militar", "Treino em Casa"] },
+    { id: "running", label: "🏃 Corrida e Caminhada", backendCategory: "Corrida", subtypes: ["Caminhada", "Caminhada Rápida", "Corrida Leve", "Corrida de Rua", "Corrida em Esteira", "Trail Running", "Corrida de Montanha", "Sprint", "Cooper", "HIIT Corrida"] },
+    { id: "cycling", label: "🚴 Ciclismo", backendCategory: "Ciclismo", subtypes: ["Bicicleta Urbana", "Mountain Bike", "Speed", "Gravel", "BMX", "Ciclismo Indoor (Spinning)", "Ciclismo de Estrada"] },
+    { id: "swimming", label: "🏊 Natação", backendCategory: "Aquáticos", subtypes: ["Natação Livre", "Costas", "Peito", "Borboleta", "Crawl", "Hidroginástica", "Águas Abertas"] },
+    { id: "martial-arts", label: "🥋 Artes Marciais", backendCategory: "Artes Marciais", subtypes: ["Judô", "Karatê", "Jiu-Jitsu", "Muay Thai", "Boxe", "Kickboxing", "Taekwondo", "Kung Fu", "Capoeira", "Krav Maga", "MMA", "Wrestling"] },
+    { id: "team-sports", label: "⚽ Esportes Coletivos", backendCategory: "Esportes", subtypes: ["Futebol", "Futsal", "Society", "Basquete", "Vôlei", "Handebol", "Rugby", "Beisebol", "Softbol", "Hóquei", "Futebol Americano"] },
+    { id: "individual-sports", label: "🎾 Esportes Individuais", backendCategory: "Esportes", subtypes: ["Tênis", "Beach Tennis", "Tênis de Mesa", "Badminton", "Squash", "Golfe", "Boliche", "Tiro com Arco"] },
+    { id: "mind-body", label: "🧘 Corpo e Mente", backendCategory: "Bem-estar", subtypes: ["Yoga", "Pilates", "Alongamento", "Meditação Ativa", "Tai Chi Chuan", "Qi Gong"] },
+    { id: "dance", label: "💃 Dança", backendCategory: "Dança", subtypes: ["Zumba", "FitDance", "Dança de Salão", "Ballet", "Jazz", "Hip Hop", "Forró", "Samba", "Dança Contemporânea", "K-pop Dance"] },
+    { id: "outdoor", label: "🏔️ Outdoor", backendCategory: "Outro", subtypes: ["Escalada", "Rapel", "Trekking", "Hiking", "Montanhismo", "Canoagem", "Caiaque", "Stand Up Paddle", "Surfe", "Windsurf", "Kitesurf", "Remo"] },
+    { id: "winter", label: "❄️ Esportes de Inverno", backendCategory: "Outro", subtypes: ["Esqui", "Snowboard", "Patinação no Gelo"] },
+    { id: "wheels", label: "🛼 Rodas", backendCategory: "Outro", subtypes: ["Skate", "Longboard", "Patins", "Patinete"] },
+    { id: "cardio", label: "❤️ Cardio", backendCategory: "Outro", subtypes: ["Elíptico", "Escada", "Step", "Corda", "Remo Indoor"] },
+    { id: "hiit", label: "🏃 HIIT", backendCategory: "Outro", subtypes: ["HIIT", "Tabata", "EMOM", "AMRAP"] },
+    { id: "kids", label: "🧒 Infantil", backendCategory: "Outro", subtypes: ["Recreação", "Psicomotricidade", "Ginástica Infantil"] },
+    { id: "inclusive", label: "♿ Exercícios Inclusivos e Adaptados", backendCategory: "Outro", subtypes: ["Corrida em Cadeira de Rodas", "Basquete em Cadeira de Rodas", "Tênis em Cadeira de Rodas", "Rugby em Cadeira de Rodas", "Handbike", "Dança em Cadeira de Rodas", "Natação Adaptada", "Hidroterapia", "Musculação Adaptada", "Treino Funcional Adaptado", "Alongamento Adaptado", "Mobilidade Adaptada", "Fortalecimento Muscular Adaptado", "Exercícios com Faixas Elásticas", "Exercícios Sentados", "Caminhada Assistida", "Caminhada com Andador", "Caminhada com Bengala", "Exercícios de Equilíbrio", "Coordenação Motora", "Fisioterapia Motora", "Bicicleta Ergométrica Adaptada", "Pedal Manual (Handcycle Indoor)", "Exercícios Respiratórios", "Cardio Adaptado", "Yoga Adaptada", "Pilates Adaptado", "Tai Chi Adaptado", "Relaxamento Guiado", "Meditação em Movimento", "Psicomotricidade", "Coordenação Motora Global", "Coordenação Motora Fina", "Estimulação Sensorial", "Circuito Motor", "Atletismo Paralímpico", "Bocha Paralímpica", "Goalball", "Futebol de Cegos", "Vôlei Sentado", "Halterofilismo Paralímpico", "Paracanoagem", "Paratriatlo", "Parabadminton", "Parataekwondo", "Esgrima em Cadeira de Rodas", "Remo Paralímpico", "Hipismo Paralímpico", "Caminhada Leve", "Ginástica Funcional para Idosos", "Pilates Sênior", "Hidroginástica", "Dança Sênior", "Mobilidade Articular"] },
+    { id: "imported", label: "📱 Importados Automaticamente", backendCategory: "Outro", subtypes: ["Google Fit", "Health Connect", "Apple Health", "Samsung Health", "Garmin", "Polar", "Suunto", "Coros", "Strava", "Fitbit", "Amazfit", "Huawei Health", "Zepp", "Mi Fitness"] }
+  ]);
+
+  useEffect(() => {
+    fetch("/api/exercises/categories")
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          const mapped = data.map((cat: any) => {
+            let backendCategory: ExerciseCategory = "Outro";
+            if (cat.id === "strength") backendCategory = "Musculação";
+            else if (cat.id === "running") backendCategory = "Corrida";
+            else if (cat.id === "cycling") backendCategory = "Ciclismo";
+            else if (cat.id === "swimming") backendCategory = "Aquáticos";
+            else if (cat.id === "martial-arts") backendCategory = "Artes Marciais";
+            else if (cat.id === "team-sports" || cat.id === "individual-sports") backendCategory = "Esportes";
+            else if (cat.id === "mind-body") backendCategory = "Bem-estar";
+            else if (cat.id === "dance") backendCategory = "Dança";
+            return {
+              id: cat.id,
+              label: cat.label,
+              backendCategory,
+              subtypes: cat.subtypes
+            };
+          });
+          setExerciseLibrary(mapped);
+        }
+      })
+      .catch(err => console.error("Error loading categories", err));
+  }, []);
 
   // Selected workout states
-  const [selectedLibId, setSelectedLibId] = useState<string>("lib-strength");
-  const [selectedSubtype, setSelectedSubtype] = useState<string>("Musculação");
+  const [selectedLibId, setSelectedLibId] = useState<string>("strength");
+  const [selectedSubtype, setSelectedSubtype] = useState<string>("Musculação Tradicional");
+
+  useEffect(() => {
+    if (exerciseLibrary && exerciseLibrary.length > 0) {
+      const exists = exerciseLibrary.some(lib => lib.id === selectedLibId);
+      if (!exists) {
+        setSelectedLibId(exerciseLibrary[0].id);
+        if (exerciseLibrary[0].subtypes.length > 0) {
+          setSelectedSubtype(exerciseLibrary[0].subtypes[0]);
+        }
+      }
+    }
+  }, [exerciseLibrary, selectedLibId]);
+
+  // Additional conditional inputs for richer metrics
+  const [heartRateAvg, setHeartRateAvg] = useState<string>("");
+  const [heartRateMax, setHeartRateMax] = useState<string>("");
+  const [pace, setPace] = useState<string>("");
+  const [weightUsed, setWeightUsed] = useState<string>("");
+  const [sets, setSets] = useState<string>("");
+  const [reps, setReps] = useState<string>("");
+  const [sourceApp, setSourceApp] = useState<string>("Manual");
 
   // Load favorites
   useEffect(() => {
@@ -421,13 +433,31 @@ export default function ActivityLogger({
         exerciseCategory: activeLib.backendCategory,
         exerciseType: selectedSubtype,
         notes: resolvedNotes,
-        customTimestamp: timestamp
+        customTimestamp: timestamp,
+        distanceKm: distance ? Number(distance) : undefined,
+        calories: calories ? Number(calories) : undefined,
+        steps: steps ? Number(steps) : undefined,
+        heartRateAvg: heartRateAvg ? Number(heartRateAvg) : undefined,
+        heartRateMax: heartRateMax ? Number(heartRateMax) : undefined,
+        pace: pace ? Number(pace) : undefined,
+        weightUsed: weightUsed ? Number(weightUsed) : undefined,
+        sets: sets ? Number(sets) : undefined,
+        reps: reps ? Number(reps) : undefined,
+        location: location || undefined,
+        sourceApp: sourceApp || undefined
       });
       setNotes("");
       setDistance("");
       setCalories("");
       setSteps("");
       setLocation("");
+      setHeartRateAvg("");
+      setHeartRateMax("");
+      setPace("");
+      setWeightUsed("");
+      setSets("");
+      setReps("");
+      setSourceApp("Manual");
     }
   };
 
@@ -1266,51 +1296,125 @@ export default function ActivityLogger({
               </div>
 
               {/* Optional metrics details inputs */}
-              <div className="bg-slate-950/45 p-4 rounded-xl border border-slate-850 space-y-3">
-                <span className="text-[9px] uppercase font-mono font-bold text-slate-450 block">Métricas Físicas Opcionais (Biblioteca Digital)</span>
-                <div className="grid grid-cols-2 gap-2.5">
-                  <div>
-                    <label className="text-[10px] text-slate-500 block mb-0.5">🏃 Distância (km)</label>
-                    <input
-                      type="text"
-                      placeholder="Ex: 5"
-                      value={distance}
-                      onChange={(e) => setDistance(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-slate-500 block mb-0.5">🔥 Calorias queimadas</label>
-                    <input
-                      type="text"
-                      placeholder="Ex: 340"
-                      value={calories}
-                      onChange={(e) => setCalories(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-slate-500 block mb-0.5">👣 Passos dados</label>
-                    <input
-                      type="text"
-                      placeholder="Ex: 7500"
-                      value={steps}
-                      onChange={(e) => setSteps(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-slate-500 block mb-0.5">📍 Local do treino</label>
-                    <input
-                      type="text"
-                      placeholder="Ex: Parque Jaqueira"
-                      value={location}
-                      onChange={(e) => setLocation(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
-                    />
+              {selectedSubtype && (
+                <div className="bg-slate-950/45 p-4 rounded-xl border border-slate-850 space-y-3">
+                  <span className="text-[9px] uppercase font-mono font-bold text-slate-450 block">Métricas Físicas Opcionais ({selectedSubtype})</span>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">🏃 Distância (km)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 5"
+                        value={distance}
+                        onChange={(e) => setDistance(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">🔥 Calorias queimadas</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 340"
+                        value={calories}
+                        onChange={(e) => setCalories(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">👣 Passos dados</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 7500"
+                        value={steps}
+                        onChange={(e) => setSteps(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">📍 Local do treino</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: Parque Jaqueira"
+                        value={location}
+                        onChange={(e) => setLocation(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">❤️ FC Média (bpm)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 145"
+                        value={heartRateAvg}
+                        onChange={(e) => setHeartRateAvg(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">📈 FC Máxima (bpm)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 175"
+                        value={heartRateMax}
+                        onChange={(e) => setHeartRateMax(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">⏱️ Ritmo (min/km)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 5.30"
+                        value={pace}
+                        onChange={(e) => setPace(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">🏋️ Peso Usado (kg)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 40"
+                        value={weightUsed}
+                        onChange={(e) => setWeightUsed(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">🔄 Séries (sets)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 4"
+                        value={sets}
+                        onChange={(e) => setSets(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">🔁 Repetições (reps)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 12"
+                        value={reps}
+                        onChange={(e) => setReps(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-[10px] text-slate-500 block mb-0.5">📱 Origem / Aplicativo de Sincronização</label>
+                      <select
+                        value={sourceApp}
+                        onChange={(e) => setSourceApp(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 text-xs p-1.5 rounded text-white outline-none cursor-pointer"
+                      >
+                        {["Manual", "Google Fit", "Apple Health", "Samsung Health", "Garmin", "Strava", "Fitbit", "Polar", "Suunto", "Coros", "Amazfit", "Huawei Health", "Outro"].map((app) => (
+                          <option key={app} value={app}>{app}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               <div>
                 <label className="text-[10px] uppercase font-mono font-bold text-slate-500 block mb-1">Anotações / Descrição do treino (Opcional):</label>

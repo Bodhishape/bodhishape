@@ -88,18 +88,38 @@ export interface Activity {
   userId: string;
   type: "gongyo_morning" | "gongyo_evening" | "daimoku" | "exercise";
   category?: ExerciseCategory;
-  subType?: string; // e.g. "Musculatura", "Esteira", "Pilates"
+  subType?: string;
   minutes?: number;
   points: number;
   notes?: string;
   timestamp: string;
-  location?: string;
+  date?: string;
+  startTimestamp?: string;
+  endTimestamp?: string;
+  duration?: number;
+  // Métricas físicas
   distanceKm?: number;
   calories?: number;
   steps?: number;
-  heartRate?: number; // Future heart rate metric support
-  verified?: boolean; // Verified badge
-  sourceDevice?: string; // Apple Watch, Garmin, etc.
+  heartRateAvg?: number;
+  heartRateMax?: number;
+  pace?: number;
+  speedAvg?: number;
+  weightUsed?: number;
+  sets?: number;
+  reps?: number;
+  // Mídia
+  photos?: string[];
+  videos?: string[];
+  // Localização
+  location?: string | any;
+  // Origem
+  sourceDevice?: string;
+  sourceApp?: "Manual" | "Google Fit" | "Apple Health" | "Samsung Health" | "Garmin" | "Strava" | "Fitbit" | "Polar" | "Suunto" | "Coros" | "Amazfit" | "Huawei Health" | "Outro";
+  // Integração futura
+  gpxUrl?: string;
+  tcxUrl?: string;
+  verified?: boolean;
 }
 
 export interface Comment {

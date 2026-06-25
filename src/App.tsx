@@ -261,7 +261,11 @@ export default function App() {
             localStorage.setItem("daimoku_timer_running", "false");
             localStorage.removeItem("daimoku_timer_target_timestamp");
             
-            setDaimokuCompletedMinutes(daimokuTimerDuration);
+            const totalMins = daimokuTimerDuration;
+            const remSecs = remaining;
+            const actualMins = Math.max(1, Math.round((totalMins * 60 - remSecs) / 60));
+            
+            setDaimokuCompletedMinutes(actualMins);
             setShowDaimokuCompletedModal(true);
             playTraditionalThreeBells();
           }
@@ -1232,6 +1236,24 @@ export default function App() {
     notes?: string;
     startTimestamp?: string;
     endTimestamp?: string;
+    distanceKm?: number;
+    calories?: number;
+    steps?: number;
+    heartRateAvg?: number;
+    heartRateMax?: number;
+    pace?: number;
+    speedAvg?: number;
+    weightUsed?: number;
+    sets?: number;
+    reps?: number;
+    photos?: string[];
+    videos?: string[];
+    location?: string | { lat: number, lng: number, address?: string };
+    sourceDevice?: string;
+    sourceApp?: string;
+    gpxUrl?: string;
+    tcxUrl?: string;
+    [key: string]: any;
   }) => {
     if (!currentUser) return;
     try {
@@ -2145,7 +2167,7 @@ export default function App() {
 
       const totalMins = daimokuTimerDuration;
       const remSecs = daimokuTimerSecondsRemaining;
-      const actualMins = Math.max(0.1, Number(((totalMins * 60 - remSecs) / 60).toFixed(2)));
+      const actualMins = Math.max(1, Math.round((totalMins * 60 - remSecs) / 60));
       
       setDaimokuCompletedMinutes(actualMins);
       setShowDaimokuCompletedModal(true);

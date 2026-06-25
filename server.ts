@@ -234,10 +234,17 @@ async function getAnonymousIdToken(): Promise<string | null> {
       const data = await res.json();
       return data.idToken;
     } else {
-      console.error("[FIREBASE_REST] Anonymous sign-in failed:", await res.text());
+      let errMsg = "Unknown error";
+      try {
+        const errJson = await res.json();
+        errMsg = errJson?.error?.message || JSON.stringify(errJson);
+      } catch {
+        // ignore
+      }
+      console.warn(`[FIREBASE_REST] Anonymous sign-in not enabled or failed (${errMsg}). Operating with local cache.`);
     }
   } catch (err: any) {
-    console.error("[FIREBASE_REST] Error getting anonymous token:", err.message);
+    console.warn("[FIREBASE_REST] Error getting anonymous token:", err.message);
   }
   return null;
 }
@@ -993,6 +1000,50 @@ app.use("/api", async (req: any, res: any, next: any) => {
   next();
 });
 
+const exercisesCategories = [
+  { "id": "strength", "label": "🏋️ Musculação e Força", "subtypes": ["Musculação Tradicional", "Hipertrofia", "Força", "Powerlifting", "Levantamento Olímpico", "Treino Funcional", "Cross Training", "CrossFit", "Calistenia", "Street Workout", "Treino em Circuito", "Treino Militar", "Treino em Casa"] },
+  { "id": "running", "label": "🏃 Corrida e Caminhada", "subtypes": ["Caminhada", "Caminhada Rápida", "Corrida Leve", "Corrida de Rua", "Corrida em Esteira", "Trail Running", "Corrida de Montanha", "Sprint", "Cooper", "HIIT Corrida"] },
+  { "id": "cycling", "label": "🚴 Ciclismo", "subtypes": ["Bicicleta Urbana", "Mountain Bike", "Speed", "Gravel", "BMX", "Ciclismo Indoor (Spinning)", "Ciclismo de Estrada"] },
+  { "id": "swimming", "label": "🏊 Natação", "subtypes": ["Natação Livre", "Costas", "Peito", "Borboleta", "Crawl", "Hidroginástica", "Águas Abertas"] },
+  { "id": "martial-arts", "label": "🥋 Artes Marciais", "subtypes": ["Judô", "Karatê", "Jiu-Jitsu", "Muay Thai", "Boxe", "Kickboxing", "Taekwondo", "Kung Fu", "Capoeira", "Krav Maga", "MMA", "Wrestling"] },
+  { "id": "team-sports", "label": "⚽ Esportes Coletivos", "subtypes": ["Futebol", "Futsal", "Society", "Basquete", "Vôlei", "Handebol", "Rugby", "Beisebol", "Softbol", "Hóquei", "Futebol Americano"] },
+  { "id": "individual-sports", "label": "🎾 Esportes Individuais", "subtypes": ["Tênis", "Beach Tennis", "Tênis de Mesa", "Badminton", "Squash", "Golfe", "Boliche", "Tiro com Arco"] },
+  { "id": "mind-body", "label": "🧘 Corpo e Mente", "subtypes": ["Yoga", "Pilates", "Alongamento", "Meditação Ativa", "Tai Chi Chuan", "Qi Gong"] },
+  { "id": "dance", "label": "💃 Dança", "subtypes": ["Zumba", "FitDance", "Dança de Salão", "Ballet", "Jazz", "Hip Hop", "Forró", "Samba", "Dança Contemporânea", "K-pop Dance"] },
+  { "id": "outdoor", "label": "🏔️ Outdoor", "subtypes": ["Escalada", "Rapel", "Trekking", "Hiking", "Montanhismo", "Canoagem", "Caiaque", "Stand Up Paddle", "Surfe", "Windsurf", "Kitesurf", "Remo"] },
+  { "id": "winter", "label": "❄️ Esportes de Inverno", "subtypes": ["Esqui", "Snowboard", "Patinação no Gelo"] },
+  { "id": "wheels", "label": "🛼 Rodas", "subtypes": ["Skate", "Longboard", "Patins", "Patinete"] },
+  { "id": "cardio", "label": "❤️ Cardio", "subtypes": ["Elíptico", "Escada", "Step", "Corda", "Remo Indoor"] },
+  { "id": "hiit", "label": "🏃 HIIT", "subtypes": ["HIIT", "Tabata", "EMOM", "AMRAP"] },
+  { "id": "kids", "label": "🧒 Infantil", "subtypes": ["Recreação", "Psicomotricidade", "Ginástica Infantil"] },
+  { "id": "inclusive", "label": "♿ Exercícios Inclusivos e Adaptados", "subtypes": ["Corrida em Cadeira de Rodas", "Basquete em Cadeira de Rodas", "Tênis em Cadeira de Rodas", "Rugby em Cadeira de Rodas", "Handbike", "Dança em Cadeira de Rodas", "Natação Adaptada", "Hidroterapia", "Exercícios Aquáticos Adaptados", "Musculação Adaptada", "Treino Funcional Adaptado", "Alongamento Adaptado", "Mobilidade Adaptada", "Fortalecimento Muscular Adaptado", "Exercícios com Faixas Elásticas", "Exercícios Sentados", "Caminhada Assistida", "Caminhada com Andador", "Caminhada com Bengala", "Exercícios de Equilíbrio", "Coordenação Motora", "Exercícios de Marcha", "Reeducação Motora", "Fisioterapia Motora", "Bicicleta Ergométrica Adaptada", "Pedal Manual (Handcycle Indoor)", "Exercícios Respiratórios", "Cardio Adaptado", "Yoga Adaptada", "Pilates Adaptado", "Tai Chi Adaptado", "Qi Gong Adaptado", "Relaxamento Guiado", "Meditação em Movimento", "Psicomotricidade", "Coordenação Motora Global", "Coordenação Motora Fina", "Estimulação Sensorial", "Circuito Motor", "Exercícios Cognitivos com Movimento", "Atletismo Paralímpico", "Bocha Paralímpica", "Goalball", "Futebol de Cegos", "Futebol PC", "Vôlei Sentado", "Halterofilismo Paralímpico", "Paracanoagem", "Paratriatlo", "Parabadminton", "Parataekwondo", "Tiro Esportivo Paralímpico", "Esgrima em Cadeira de Rodas", "Remo Paralímpico", "Hipismo Paralímpico", "Caminhada Leve", "Ginástica Funcional para Idosos", "Alongamento para Terceira Idade", "Pilates Sênior", "Hidroginástica Sênior", "Exercícios de Equilíbrio para Idosos", "Fortalecimento para Idosos", "Dança Sênior", "Mobilidade Articular"] }
+];
+
+app.get("/api/exercises/categories", (req, res) => {
+  res.json(exercisesCategories);
+});
+
+app.get("/api/exercises", (req, res) => {
+  const allExercises: any[] = [];
+  exercisesCategories.forEach(cat => {
+    cat.subtypes.forEach(sub => {
+      const id = `${cat.id}-${sub.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+      allExercises.push({
+        id,
+        name: sub,
+        categoryId: cat.id
+      });
+    });
+  });
+
+  const search = req.query.search ? String(req.query.search).toLowerCase() : null;
+  if (search) {
+    const filtered = allExercises.filter(ex => ex.name.toLowerCase().includes(search));
+    return res.json(filtered);
+  }
+  res.json(allExercises);
+});
+
 app.get("/api/firebase-config", (req, res) => {
   if (firebaseConfig) {
     res.json({
@@ -1255,7 +1306,7 @@ app.post("/api/auth/stage-registration", (req: any, res) => {
     stagedAt: new Date().toISOString()
   });
   
-  writeDB(dbData);
+  writeDB(dbData, req.idToken);
   res.json({ success: true });
 });
 
@@ -1598,11 +1649,11 @@ app.post("/api/upload", (req, res) => {
     if (dbData.persistent_media.length > 200) {
       const removedItem = dbData.persistent_media.shift();
       if (removedItem) {
-        removeDoc("persistent_media", removedItem.id);
+        removeDoc("persistent_media", removedItem.id, (req as any).idToken);
       }
     }
 
-    writeDB(dbData);
+    writeDB(dbData, (req as any).idToken);
     
     res.json({ url: `/uploads/${filename}` });
   } catch (err: any) {
@@ -1622,12 +1673,6 @@ app.post("/api/users/update", async (req: any, res) => {
 
   if (!userId) {
     return res.status(400).json({ error: "ID de usuário é obrigatório." });
-  }
-
-  // Sincroniza dados mais recentes em nuvem do usuário apenas se não houver alterações no body
-  const hasUpdates = Object.keys(req.body).some(key => key !== "userId");
-  if (!hasUpdates && req.idToken) {
-    await syncUserFromFirestore(userId, req.idToken);
   }
 
   const dbData = readDB();
@@ -1727,11 +1772,6 @@ app.post("/api/users/update", async (req: any, res) => {
 app.get("/api/dashboard-stats/:userId", async (req: any, res) => {
   const { userId } = req.params;
 
-  // Sincroniza dados históricos reais do Firestore antes de retornar estatísticas
-  if (req.idToken) {
-    await syncUserFromFirestore(userId, req.idToken);
-  }
-
   const dbData = readDB();
 
   const user = dbData.users.find((u: any) => u.id === userId);
@@ -1777,7 +1817,34 @@ app.get("/api/dashboard-stats/:userId", async (req: any, res) => {
 
 // Logs activities and triggers calculations + automated IA comments
 app.post("/api/activities/log", async (req, res) => {
-  const { userId, type, minutes, exerciseCategory, exerciseType, notes, customTimestamp, startTimestamp, endTimestamp } = req.body;
+  const {
+    userId,
+    type,
+    minutes,
+    exerciseCategory,
+    exerciseType,
+    notes,
+    customTimestamp,
+    startTimestamp,
+    endTimestamp,
+    distanceKm,
+    calories,
+    steps,
+    heartRateAvg,
+    heartRateMax,
+    pace,
+    speedAvg,
+    weightUsed,
+    sets,
+    reps,
+    photos,
+    videos,
+    location,
+    sourceDevice,
+    sourceApp,
+    gpxUrl,
+    tcxUrl
+  } = req.body;
 
   // Proteção rigorosa contra injeção de parâmetros e scripts maliciosos nos logs de atividade
   if (!userId || userId.length > 128 || hasMalwareOrSuspiciousPatterns(userId)) {
@@ -1896,7 +1963,24 @@ app.post("/api/activities/log", async (req, res) => {
     timestamp: logTimestamp,
     date: logTimestamp.split("T")[0],
     startTimestamp: startTimestamp || undefined,
-    endTimestamp: endTimestamp || undefined
+    endTimestamp: endTimestamp || undefined,
+    distanceKm: distanceKm !== undefined && distanceKm !== null && distanceKm !== "" ? Number(distanceKm) : undefined,
+    calories: calories !== undefined && calories !== null && calories !== "" ? Number(calories) : undefined,
+    steps: steps !== undefined && steps !== null && steps !== "" ? Number(steps) : undefined,
+    heartRateAvg: heartRateAvg !== undefined && heartRateAvg !== null && heartRateAvg !== "" ? Number(heartRateAvg) : undefined,
+    heartRateMax: heartRateMax !== undefined && heartRateMax !== null && heartRateMax !== "" ? Number(heartRateMax) : undefined,
+    pace: pace !== undefined && pace !== null && pace !== "" ? Number(pace) : undefined,
+    speedAvg: speedAvg !== undefined && speedAvg !== null && speedAvg !== "" ? Number(speedAvg) : undefined,
+    weightUsed: weightUsed !== undefined && weightUsed !== null && weightUsed !== "" ? Number(weightUsed) : undefined,
+    sets: sets !== undefined && sets !== null && sets !== "" ? Number(sets) : undefined,
+    reps: reps !== undefined && reps !== null && reps !== "" ? Number(reps) : undefined,
+    photos: Array.isArray(photos) ? photos : undefined,
+    videos: Array.isArray(videos) ? videos : undefined,
+    location: location || undefined,
+    sourceDevice: sourceDevice || undefined,
+    sourceApp: sourceApp || undefined,
+    gpxUrl: gpxUrl || undefined,
+    tcxUrl: tcxUrl || undefined
   };
   dbData.activities.push(newActivity);
 
@@ -1952,7 +2036,7 @@ app.post("/api/activities/log", async (req, res) => {
   };
 
   dbData.posts.unshift(newPost);
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
 
   res.json({ success: true, message: successMsg, activity: newActivity, post: newPost });
 });
@@ -1979,7 +2063,24 @@ app.post("/api/activities/log-combined", async (req, res) => {
     exerciseDistance,
     exerciseCalories,
     exerciseSteps,
-    exerciseNotes
+    exerciseNotes,
+    distanceKm,
+    calories,
+    steps,
+    heartRateAvg,
+    heartRateMax,
+    pace,
+    speedAvg,
+    weightUsed,
+    sets,
+    reps,
+    photos,
+    videos,
+    location,
+    sourceDevice,
+    sourceApp,
+    gpxUrl,
+    tcxUrl
   } = req.body;
 
   const dbData = readDB();
@@ -2113,10 +2214,23 @@ app.post("/api/activities/log-combined", async (req, res) => {
       points: exPoints,
       notes: exerciseNotes || "",
       timestamp: exTimestamp,
-      location: exerciseLocation || undefined,
-      distanceKm: exerciseDistance ? Number(exerciseDistance) : undefined,
-      calories: exerciseCalories ? Number(exerciseCalories) : undefined,
-      steps: exerciseSteps ? Number(exerciseSteps) : undefined
+      location: location || exerciseLocation || undefined,
+      distanceKm: distanceKm !== undefined && distanceKm !== null && distanceKm !== "" ? Number(distanceKm) : (exerciseDistance ? Number(exerciseDistance) : undefined),
+      calories: calories !== undefined && calories !== null && calories !== "" ? Number(calories) : (exerciseCalories ? Number(exerciseCalories) : undefined),
+      steps: steps !== undefined && steps !== null && steps !== "" ? Number(steps) : (exerciseSteps ? Number(exerciseSteps) : undefined),
+      heartRateAvg: heartRateAvg !== undefined && heartRateAvg !== null && heartRateAvg !== "" ? Number(heartRateAvg) : undefined,
+      heartRateMax: heartRateMax !== undefined && heartRateMax !== null && heartRateMax !== "" ? Number(heartRateMax) : undefined,
+      pace: pace !== undefined && pace !== null && pace !== "" ? Number(pace) : undefined,
+      speedAvg: speedAvg !== undefined && speedAvg !== null && speedAvg !== "" ? Number(speedAvg) : undefined,
+      weightUsed: weightUsed !== undefined && weightUsed !== null && weightUsed !== "" ? Number(weightUsed) : undefined,
+      sets: sets !== undefined && sets !== null && sets !== "" ? Number(sets) : undefined,
+      reps: reps !== undefined && reps !== null && reps !== "" ? Number(reps) : undefined,
+      photos: Array.isArray(photos) ? photos : undefined,
+      videos: Array.isArray(videos) ? videos : undefined,
+      sourceDevice: sourceDevice || undefined,
+      sourceApp: sourceApp || undefined,
+      gpxUrl: gpxUrl || undefined,
+      tcxUrl: tcxUrl || undefined
     };
     dbData.activities.push(exAct);
     createdActivities.push(exAct);
@@ -2313,7 +2427,7 @@ app.post("/api/activities/log-combined", async (req, res) => {
     dbData.posts.unshift(finalPost);
   }
 
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
 
   const loggedGongyo = gongyoMorning || gongyoEvening;
   const loggedDaimoku = daimoku && (Number(daimokuMinutes) || 0) > 0;
@@ -2366,7 +2480,7 @@ app.post("/api/stories", (req, res) => {
   };
 
   dbData.stories.push(newStory);
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json(newStory);
 });
 
@@ -2393,7 +2507,7 @@ app.post("/api/stories/:storyId/like", (req, res) => {
     story.likes.splice(index, 1);
   }
 
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json(story);
 });
 
@@ -2422,7 +2536,7 @@ app.post("/api/stories/:storyId/comment", (req, res) => {
   };
 
   story.comments.push(newComment);
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json(story);
 });
 
@@ -2478,7 +2592,7 @@ app.post("/api/posts", (req, res) => {
   };
 
   dbData.posts.unshift(newPost);
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json(newPost);
 });
 
@@ -2566,7 +2680,7 @@ app.delete("/api/posts/:postId", (req, res) => {
     }
   }
 
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json({ success: true, message: "Publicação e registros associados excluídos com sucesso.", deletedActivitiesCount });
 });
 
@@ -2605,7 +2719,7 @@ app.put("/api/posts/:postId", (req, res) => {
   
   post.editedAt = new Date().toISOString();
 
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json(post);
 });
 
@@ -2643,7 +2757,7 @@ app.post("/api/posts/:postId/comments/:commentId/delete", (req, res) => {
   }
 
   post.comments.splice(commentIndex, 1);
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json(post);
 });
 
@@ -2685,7 +2799,7 @@ app.post("/api/posts/:postId/comments/:commentId/update", (req, res) => {
   comment.content = sanitizeInput(content);
   comment.editedAt = new Date().toISOString();
 
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json(post);
 });
 
@@ -2722,7 +2836,7 @@ app.post("/api/posts/:postId/react", (req, res) => {
   }
 
   post.reactions[reaction] = list;
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json(post);
 });
 
@@ -2766,7 +2880,7 @@ app.post("/api/posts/:postId/comment", (req, res) => {
   };
 
   post.comments.push(newComment);
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json(post);
 });
 
@@ -2808,7 +2922,7 @@ app.post("/api/goals", (req, res) => {
   };
 
   dbData.goals.push(newGoal);
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json(newGoal);
 });
 
@@ -2824,7 +2938,7 @@ app.post("/api/goals/:goalId/progress", (req, res) => {
   }
 
   goal.progress = Math.min(100, Math.max(0, Number(progress)));
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json(goal);
 });
 
@@ -2833,7 +2947,7 @@ app.delete("/api/goals/:goalId", (req, res) => {
   const dbData = readDB();
   
   dbData.goals = dbData.goals.filter((g: any) => g.id !== goalId);
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json({ success: true });
 });
 
@@ -2865,7 +2979,7 @@ app.post("/api/communities", (req, res) => {
   };
 
   dbData.communities.push(newComm);
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json(newComm);
 });
 
@@ -2892,7 +3006,7 @@ app.post("/api/communities/:id/join", (req, res) => {
   comm.membersCount = comm.participants.length;
 
   dbData.communities[index] = comm;
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json({ success: true, community: comm });
 });
 
@@ -2917,7 +3031,7 @@ app.post("/api/communities/:id/leave", (req, res) => {
   comm.membersCount = comm.participants.length;
 
   dbData.communities[index] = comm;
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json({ success: true, community: comm });
 });
 
@@ -2979,8 +3093,7 @@ app.post("/api/notices", async (req: any, res: any) => {
   };
 
   dbData.notices.push(newNotice);
-  writeDB(dbData);
-  persistDoc("notices", newNotice.id, newNotice);
+  writeDB(dbData, req.idToken);
   res.json(newNotice);
 });
 
@@ -3018,8 +3131,7 @@ app.post("/api/notices/update", async (req: any, res: any) => {
   };
 
   dbData.notices[index] = updatedNotice;
-  writeDB(dbData);
-  persistDoc("notices", id, updatedNotice, req.idToken, { isUpdate: true });
+  writeDB(dbData, req.idToken);
   res.json(updatedNotice);
 });
 
@@ -3040,8 +3152,7 @@ app.delete("/api/notices/:id", async (req: any, res: any) => {
   }
 
   dbData.notices.splice(index, 1);
-  writeDB(dbData);
-  removeDoc("notices", id);
+  writeDB(dbData, req.idToken);
   res.json({ success: true });
 });
 
@@ -3078,8 +3189,7 @@ app.post("/api/notices/join", (req: any, res: any) => {
   }
 
   dbData.notices[index] = notice;
-  writeDB(dbData);
-  persistDoc("notices", id, notice, req.idToken, { isUpdate: true });
+  writeDB(dbData, req.idToken);
   res.json(notice);
 });
 
@@ -3156,8 +3266,7 @@ app.post("/api/memories", async (req: any, res: any) => {
   };
 
   dbData.memories.push(newMemory);
-  writeDB(dbData);
-  persistDoc("memories", newMemory.id, newMemory);
+  writeDB(dbData, req.idToken);
   res.json(newMemory);
 });
 
@@ -3192,8 +3301,7 @@ app.delete("/api/memories/:id", async (req: any, res: any) => {
   }
 
   dbData.memories.splice(index, 1);
-  writeDB(dbData);
-  removeDoc("memories", id);
+  writeDB(dbData, req.idToken);
   res.json({ success: true });
 });
 
@@ -3226,8 +3334,7 @@ app.post("/api/chats", (req, res) => {
   };
 
   dbData.chats.push(chatMsg);
-  writeDB(dbData);
-  persistDoc("chats", chatMsg.id, chatMsg);
+  writeDB(dbData, (req as any).idToken);
   res.json(chatMsg);
 });
 
@@ -3242,8 +3349,7 @@ app.post("/api/chats/:msgId/toggle-pin", (req, res) => {
   }
 
   msg.isPinned = !msg.isPinned;
-  writeDB(dbData);
-  persistDoc("chats", msgId, msg, (req as any).idToken, { isUpdate: true });
+  writeDB(dbData, (req as any).idToken);
   res.json(msg);
 });
 
@@ -3261,8 +3367,7 @@ app.post("/api/chats/:msgId/react", (req, res) => {
   if (!msg.reactions) msg.reactions = {};
   msg.reactions[emoji] = (msg.reactions[emoji] || 0) + 1;
 
-  writeDB(dbData);
-  persistDoc("chats", msgId, msg, (req as any).idToken, { isUpdate: true });
+  writeDB(dbData, (req as any).idToken);
   res.json(msg);
 });
 
@@ -3280,7 +3385,7 @@ app.post("/api/kofu", (req, res) => {
     kofuRecord.updatedAt = new Date().toISOString();
   }
 
-  writeDB(dbData);
+  writeDB(dbData, (req as any).idToken);
   res.json(kofuRecord);
 });
 
@@ -3299,7 +3404,7 @@ app.post("/api/bs", (req, res) => {
     if (status === "ativo" && bsRecord.currentStreakMonths === 0) {
       bsRecord.currentStreakMonths = 1;
     }
-    writeDB(dbData);
+    writeDB(dbData, (req as any).idToken);
   }
 
   res.json(bsRecord);
@@ -3433,7 +3538,6 @@ app.delete("/api/reminders/:id", (req: any, res) => {
 
   dbData.reminders.splice(index, 1);
   writeDB(dbData, req.idToken);
-  removeDoc("reminders", id, req.idToken);
 
   res.json({ success: true, message: "Lembrete removido com sucesso." });
 });
