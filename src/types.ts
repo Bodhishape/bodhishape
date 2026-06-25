@@ -109,8 +109,10 @@ export interface Activity {
   distanceKm?: number;
   calories?: number;
   steps?: number;
+  heartRate?: number;
   heartRateAvg?: number;
   heartRateMax?: number;
+  heartRateMin?: number;
   pace?: number;
   speedAvg?: number;
   weightUsed?: number;

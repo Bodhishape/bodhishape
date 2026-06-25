@@ -981,6 +981,105 @@ export default function App() {
   const [loggerSuccessMsg, setLoggerSuccessMsg] = useState<string | null>(null);
   const [loggerErrorMsg, setLoggerErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Bluetooth Live Heart Rate Sensor State
+  const [hrDevice, setHrDevice] = useState<any>(null); // dispositivo Bluetooth conectado
+  const [hrServer, setHrServer] = useState<any>(null); // GATT server
+  const [heartRate, setHeartRate] = useState<number>(0); // BPM atual
+  const [hrHistory, setHrHistory] = useState<{ time: string; bpm: number }[]>([]);
+  const [isHrConnected, setIsHrConnected] = useState(false);
+  const [isHrRecording, setIsHrRecording] = useState(false);
+
+  const connectHeartRateMonitor = async () => {
+    if (!(navigator as any).bluetooth) {
+      setLoggerErrorMsg("Web Bluetooth não suportado neste navegador/iframe.");
+      return;
+    }
+    try {
+      setLoggerSuccessMsg("Procurando monitores cardíacos Bluetooth...");
+      const device = await (navigator as any).bluetooth.requestDevice({
+        filters: [{ services: ['heart_rate'] }],
+        optionalServices: ['battery_service']
+      });
+      
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService('heart_rate');
+      const characteristic = await service.getCharacteristic('heart_rate_measurement');
+      
+      characteristic.addEventListener('characteristicvaluechanged', (event: any) => {
+        const value = event.target.value;
+        const flags = value.getUint8(0);
+        const isUint16 = (flags & 1) !== 0;
+        let bpm: number;
+        if (isUint16) {
+          bpm = value.getUint16(1, true);
+        } else {
+          bpm = value.getUint8(1);
+        }
+        setHeartRate(bpm);
+        const now = new Date().toISOString();
+        setHrHistory(prev => [...prev.slice(-299), { time: now, bpm }]);
+      });
+      
+      await characteristic.startNotifications();
+      
+      setHrDevice(device);
+      setHrServer(server);
+      setIsHrConnected(true);
+      setLoggerSuccessMsg(`✅ Conectado a: ${device.name || "Monitor Cardíaco"}`);
+      
+      device.addEventListener('gattserverdisconnected', () => {
+        setIsHrConnected(false);
+        setHeartRate(0);
+        setLoggerErrorMsg("⚠️ Dispositivo Bluetooth desconectado.");
+      });
+    } catch (err: any) {
+      setLoggerErrorMsg(`Erro: ${err.message || "Conexão cancelada"}`);
+    }
+  };
+
+  const disconnectHeartRateMonitor = () => {
+    if (hrDevice && hrDevice.gatt) {
+      hrDevice.gatt.disconnect();
+    }
+    setHrDevice(null);
+    setHrServer(null);
+    setIsHrConnected(false);
+    setHeartRate(0);
+    setHrHistory([]);
+    setIsHrRecording(false);
+    setLoggerSuccessMsg("Monitor cardíaco desconectado.");
+  };
+
+  const toggleHrRecording = () => {
+    if (isHrRecording) {
+      // Stop and save current session to server
+      if (hrHistory.length > 0 && currentUser) {
+        const avgBpm = Math.round(hrHistory.reduce((s, h) => s + h.bpm, 0) / hrHistory.length);
+        const durationMin = Math.round(hrHistory.length / 60); // ~1 reading per second
+        fetch("/api/heart-rate/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: currentUser.id,
+            bpmHistory: hrHistory,
+            avgBpm,
+            durationMinutes: durationMin,
+            timestamp: hrHistory[0]?.time || new Date().toISOString()
+          })
+        }).then(() => {
+          if (typeof fetchAllData === "function") {
+            fetchAllData();
+          }
+        }).catch(() => {});
+        setLoggerSuccessMsg(`💓 Sessão salva! FC média: ${avgBpm} bpm, ${durationMin} min`);
+      }
+      setIsHrRecording(false);
+    } else {
+      setHrHistory([]);
+      setIsHrRecording(true);
+    }
+  };
   const [selectedPublicUser, setSelectedPublicUser] = useState<User | null>(null);
   const [aiNotifMsg, setAiNotifMsg] = useState("");
 
@@ -3295,6 +3394,7 @@ export default function App() {
                     setShowDaimokuCompletedModal(true);
                     playTraditionalThreeBells();
                   }}
+                  heartRate={heartRate}
                 />
               )}
 
@@ -3709,52 +3809,68 @@ export default function App() {
 
                     </div>
 
-                    {/* Physical Bluetooth Heart Rate Sensor Card */}
+                    {/* Physical Bluetooth Heart Rate Sensor Card - REAL */}
                     <div className="bg-[#050f1a] border border-blue-500/20 p-5 rounded-2xl shadow-lg space-y-4 flex flex-col justify-between">
                       <div className="space-y-3">
                         <div className="flex items-center gap-2">
                           <span className="text-xl">💓</span>
                           <h3 className="text-xs font-black text-slate-100 uppercase tracking-widest font-heading">
-                            🛜 Sensor Cardíaco Bluetooth (Física)
+                            Monitor Cardíaco Bluetooth
                           </h3>
                         </div>
                         <p className="text-[11px] text-slate-350 leading-relaxed font-sans">
-                          Acompanhe seus batimentos cardíacos ao vivo durante rituais ou treinos conectando seu transmissor de cinta peitoral ou relógio inteligente com transmissão cardíaca autorizada!
+                          Conecte cinta peitoral, smartwatch ou qualquer monitor BLE compatível. Acompanhe BPM ao vivo em treinos e Daimoku.
                         </p>
                         
                         <div className="bg-slate-950 p-3 rounded-xl border border-slate-850 space-y-2 text-left">
                           <div className="flex items-center justify-between">
-                            <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">Status do Hardware:</span>
-                            <span className="text-[9px] font-mono font-black text-rose-450 uppercase">OFFLINE</span>
+                            <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">Status:</span>
+                            <span className={`text-[9px] font-mono font-black uppercase ${isHrConnected ? "text-emerald-400" : "text-rose-450"}`}>
+                              {isHrConnected ? "CONECTADO" : "OFFLINE"}
+                            </span>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">Frequência cardíaca:</span>
-                            <span className="text-xs font-mono font-black text-slate-400">--- bpm</span>
+                            <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">Frequência Cardíaca:</span>
+                            <span className={`text-lg font-mono font-black ${isHrConnected ? "text-rose-400" : "text-slate-400"}`}>
+                              {isHrConnected ? `${heartRate}` : "---"} <span className="text-xs">bpm</span>
+                            </span>
                           </div>
+                          {isHrConnected && isHrRecording && (
+                            <div className="text-[9px] font-mono text-emerald-400 animate-pulse">
+                              📝 Gravando... {hrHistory.length} leituras
+                            </div>
+                          )}
+                          {isHrConnected && hrHistory.length > 0 && (
+                            <div className="text-[9px] font-mono text-slate-500">
+                              FC média: {Math.round(hrHistory.reduce((s, h) => s + h.bpm, 0) / hrHistory.length)} bpm
+                            </div>
+                          )}
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          if (!(navigator as any).bluetooth) {
-                            setLoggerErrorMsg("Seu navegador não oferece suporte para pareamentos Web Bluetooth físicos ou o seu iFrame atual restringe essa permissão. É recomendável abrir em uma aba separada.");
-                            return;
-                          }
-                          try {
-                            setLoggerSuccessMsg("Aguardando confirmação do navegador... Selecione o sensor cardíaco ativo na caixa pop-up.");
-                            const device = await (navigator as any).bluetooth.requestDevice({
-                              filters: [{ services: ['heart_rate'] }]
-                            });
-                            setLoggerSuccessMsg(`Dispositivo Bluetooth pareado com sucesso absoluto! Conectado a: ${device.name || "Sensor cardíaco local"}`);
-                          } catch (err: any) {
-                            setLoggerErrorMsg(`Conexão cancelada ou restrita: ${err.message || err}.`);
-                          }
-                        }}
-                        className="w-full bg-[#1b253d] hover:bg-blue-800 text-blue-300 font-bold px-4 py-2.5 rounded-xl text-xs transition duration-300 border border-blue-500/20 text-center cursor-pointer"
-                      >
-                        🛜 Parear Monitor Cardíaco Bluetooth Reais
-                      </button>
+                      <div className="flex gap-2">
+                        {!isHrConnected ? (
+                          <button onClick={connectHeartRateMonitor}
+                            className="flex-1 bg-[#1b253d] hover:bg-blue-800 text-blue-300 font-bold px-4 py-2.5 rounded-xl text-xs transition border border-blue-500/20 cursor-pointer">
+                            🛜 Parear Monitor Cardíaco
+                          </button>
+                        ) : (
+                          <>
+                            <button onClick={toggleHrRecording}
+                              className={`flex-1 font-bold px-4 py-2.5 rounded-xl text-xs transition cursor-pointer ${
+                                isHrRecording 
+                                  ? "bg-rose-700 hover:bg-rose-800 text-white" 
+                                  : "bg-emerald-700 hover:bg-emerald-800 text-white"
+                              }`}>
+                              {isHrRecording ? "⏹️ Parar Gravação" : "⏺️ Iniciar Gravação"}
+                            </button>
+                            <button onClick={disconnectHeartRateMonitor}
+                              className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold px-3 py-2.5 rounded-xl text-xs transition border border-slate-700/50 cursor-pointer">
+                              Desconectar
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
 
                   </div>

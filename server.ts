@@ -338,6 +338,7 @@ async function seedAndLoadFromFirestore() {
   if (!dbData.persistent_media) dbData.persistent_media = [];
   if (!dbData.reminders) dbData.reminders = [];
   if (!dbData.notices) dbData.notices = [];
+  if (!dbData.heartRateSessions) dbData.heartRateSessions = [];
 
   console.log("[FIREBASE] Initialized database state smoothly from local JSON cache.");
 
@@ -353,7 +354,7 @@ async function seedAndLoadFromFirestore() {
     return;
   }
 
-  const publicCollections = ["users", "activities", "posts", "communities", "chats", "stories", "persistent_media", "notices", "lives", "live_comments", "feedbacks"];
+  const publicCollections = ["users", "activities", "posts", "communities", "chats", "stories", "persistent_media", "notices", "lives", "live_comments", "feedbacks", "heartRateSessions"];
   for (const col of publicCollections) {
     try {
       const fetchedDocs = await fetchCollectionFromFirestore(col, token);
@@ -684,7 +685,7 @@ function writeDB(data: any, idToken?: string) {
   // propagate change differences to Firebase Firestore asynchronously
   if (!firebaseConfig) return;
 
-  const collections = ["users", "activities", "posts", "goals", "communities", "kofu", "bs_subscription", "chats", "stories", "persistent_media", "memories", "notices", "lives", "live_comments", "feedbacks"];
+  const collections = ["users", "activities", "posts", "goals", "communities", "kofu", "bs_subscription", "chats", "stories", "persistent_media", "memories", "notices", "lives", "live_comments", "feedbacks", "heartRateSessions"];
   
   for (const col of collections) {
     const prevList = previousData[col] || [];
@@ -3798,6 +3799,60 @@ app.post("/api/import/gpx-tcx", (req: any, res: any) => {
       res.status(500).json({ error: "Erro interno no servidor ao processar arquivo." });
     }
   });
+});
+
+// HEART RATE SESSION ENDPOINT
+app.post("/api/heart-rate/save", (req: any, res: any) => {
+  const { userId, bpmHistory, avgBpm, durationMinutes, timestamp } = req.body;
+  if (!userId || !bpmHistory) {
+    return res.status(400).json({ error: "userId e bpmHistory são obrigatórios." });
+  }
+  const dbData = readDB();
+  const user = dbData.users.find((u: any) => u.id === userId);
+  if (!user) return res.status(404).json({ error: "Usuário não encontrado." });
+
+  // Save as a heart_rate session record
+  if (!dbData.heartRateSessions) dbData.heartRateSessions = [];
+  const validHistory = bpmHistory.filter((h: any) => h && typeof h.bpm === "number");
+  const maxBpm = validHistory.length > 0 ? Math.max(...validHistory.map((h: any) => h.bpm)) : 0;
+  const minBpm = validHistory.length > 0 ? Math.min(...validHistory.map((h: any) => h.bpm)) : 0;
+  
+  dbData.heartRateSessions.push({
+    id: "hr-" + Math.random().toString(36).substring(2, 11),
+    userId,
+    avgBpm: typeof avgBpm === "number" ? avgBpm : 0,
+    maxBpm,
+    minBpm,
+    durationMinutes: typeof durationMinutes === "number" ? durationMinutes : 0,
+    readings: validHistory.length,
+    bpmHistory: validHistory,
+    timestamp: timestamp || new Date().toISOString(),
+    createdAt: new Date().toISOString()
+  });
+
+  // Also create an activity entry if duration >= 1 min
+  if (durationMinutes >= 1) {
+    if (!dbData.activities) dbData.activities = [];
+    const activity = {
+      id: "act-" + Math.random().toString(36).substring(2, 11),
+      userId,
+      type: "daimoku", // default, user can change
+      category: "Monitor Cardíaco",
+      subType: "Sessão Monitorada",
+      minutes: durationMinutes,
+      heartRate: avgBpm,
+      heartRateMax: maxBpm,
+      points: durationMinutes >= 20 ? 2 : 0,
+      timestamp: timestamp || new Date().toISOString(),
+      notes: `Sessão com monitor cardíaco. FC média: ${avgBpm} bpm, ${durationMinutes} min.`,
+      sourceDevice: "bluetooth_hr",
+      verified: true
+    };
+    dbData.activities.push(activity);
+  }
+
+  writeDB(dbData, req.idToken);
+  res.json({ success: true, avgBpm, durationMinutes });
 });
 
 // REMINDERS & AGENDA REST ENDPOINTS

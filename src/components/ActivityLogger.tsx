@@ -53,6 +53,7 @@ interface ActivityLoggerProps {
     finishTimerEarly: () => void;
   };
   onShowDaimokuModal?: (elapsedMins: number) => void;
+  heartRate?: number;
 }
 
 interface VisualCategory {
@@ -71,6 +72,7 @@ export default function ActivityLogger({
   onClearMsgs,
   daimokuTimerProps,
   onShowDaimokuModal,
+  heartRate = 0,
 }: ActivityLoggerProps) {
   const currentUserId = currentUser?.id || "anon";
 
@@ -1652,6 +1654,13 @@ export default function ActivityLogger({
                   )}
                 </div>
               </div>
+
+              {heartRate > 0 && (
+                <div className="bg-rose-950/20 border border-rose-900/30 rounded-xl p-2.5 flex items-center gap-2 text-xs">
+                  <span className="text-rose-400 font-bold animate-pulse">💓 {heartRate} bpm</span>
+                  <span className="text-slate-450 font-bold">ao vivo</span>
+                </div>
+              )}
 
               {/* Slider for workout duration */}
               <div className="bg-slate-950/40 rounded-2xl p-4 border border-slate-800/65">
