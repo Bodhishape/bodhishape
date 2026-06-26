@@ -1154,7 +1154,7 @@ app.get("/api/users", (req: any, res) => {
     if (requesterId && u.id === requesterId) {
       return u;
     }
-    const { email, ...rest } = u;
+    const { email, integrations, ...rest } = u;
     return rest;
   });
   
@@ -4435,19 +4435,232 @@ async function setupViteServerOrProd() {
 
   // === INTEGRATION ENDPOINTS ===
 
+  // Helper to get a valid, automatically refreshed Strava Access Token
+  async function getValidStravaToken(user: any, dbData: any) {
+    const strava = user?.integrations?.strava;
+    if (!strava) return null;
+    const nowInSeconds = Math.floor(Date.now() / 1000);
+    // Refresh token if it expired or will expire in less than 5 minutes
+    if (strava.expiresAt && nowInSeconds >= strava.expiresAt - 300) {
+      console.log(`[STRAVA] Token expired or expiring soon for user ${user.id}. Refreshing...`);
+      try {
+        const r = await fetch("https://www.strava.com/oauth/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            client_id: process.env.STRAVA_CLIENT_ID,
+            client_secret: process.env.STRAVA_CLIENT_SECRET,
+            refresh_token: strava.refreshToken,
+            grant_type: "refresh_token"
+          })
+        });
+        if (!r.ok) {
+          const errText = await r.text();
+          console.error("[STRAVA] Failed to refresh token:", errText);
+          return null;
+        }
+        const tokens: any = await r.json();
+        if (tokens.access_token) {
+          strava.accessToken = tokens.access_token;
+          strava.refreshToken = tokens.refresh_token || strava.refreshToken;
+          strava.expiresAt = tokens.expires_at || strava.expiresAt;
+          console.log(`[STRAVA] Token refreshed successfully for user ${user.id}`);
+        }
+      } catch (error: any) {
+        console.error("[STRAVA] Exception during token refresh:", error.message);
+      }
+    }
+    return strava.accessToken;
+  }
+
+  // Helper to map and log a single Strava activity, checking for duplicates and calculating stats & points
+  function logStravaActivity(user: any, item: any, dbData: any) {
+    if (!dbData.activities) dbData.activities = [];
+    
+    const activityId = "strava-" + item.id;
+    // Check for duplicates
+    const exists = dbData.activities.some((a: any) => a.id === activityId || a.stravaId === item.id);
+    if (exists) {
+      console.log(`[STRAVA] Activity ${item.id} already synchronized for user ${user.id}. Skipping.`);
+      return null;
+    }
+
+    const logTimestamp = item.start_date_local || item.start_date || new Date().toISOString();
+    const minutes = Math.round((item.moving_time || item.elapsed_time || 1200) / 60);
+    const targetDayStr = logTimestamp.split("T")[0];
+
+    // Map types
+    const typeMap: Record<string, { category: string; subType: string }> = {
+      "Run": { category: "Cardio", subType: "Corrida" },
+      "Walk": { category: "Cardio", subType: "Caminhada" },
+      "Hike": { category: "Cardio", subType: "Trilha" },
+      "Ride": { category: "Ciclismo", subType: "Ciclismo" },
+      "VirtualRide": { category: "Ciclismo", subType: "Ciclismo Virtual" },
+      "Swim": { category: "Natação", subType: "Natação" },
+      "WeightTraining": { category: "Musculação", subType: "Musculação" },
+      "Yoga": { category: "Yoga", subType: "Yoga" },
+      "Pilates": { category: "Pilates", subType: "Pilates" },
+      "Crossfit": { category: "Crossfit", subType: "Crossfit" }
+    };
+
+    const exerciseCategory = typeMap[item.type]?.category || "Treino Funcional";
+    const exerciseType = typeMap[item.type]?.subType || item.type || "Exercício";
+
+    // Exercise Business Rules: min 20 min = 2 points, max 2 points/day limit
+    const userLogsForToday = dbData.activities.filter((a: any) => a.userId === user.id && a.timestamp.startsWith(targetDayStr));
+    const hasExerciseToday = userLogsForToday.some((a: any) => a.type === "exercise" && (a.minutes || 0) >= 20);
+
+    let points = 0;
+    let successMsg = "";
+    if (minutes < 20) {
+      points = 0;
+      successMsg = `Exercício de ${minutes} min registrado via Strava. Regra: exercícios devem durar pelo menos 20 min para pontuar.`;
+    } else {
+      if (hasExerciseToday) {
+        points = 0;
+        successMsg = `Exercício de ${minutes} min registrado via Strava. Você já pontuou hoje (máximo de 2 pontos por dia).`;
+      } else {
+        points = 2;
+        successMsg = `Treino de ${minutes} min registrado via Strava! +2 pontos desbloqueados.`;
+      }
+    }
+
+    const newActivity = {
+      id: activityId,
+      userId: user.id,
+      type: "exercise",
+      category: exerciseCategory,
+      subType: exerciseType,
+      minutes: minutes,
+      duration: minutes,
+      points,
+      notes: `Atividade sincronizada via Strava: ${item.name || ""}`,
+      timestamp: logTimestamp,
+      date: targetDayStr,
+      distanceKm: item.distance ? Number((item.distance / 1000).toFixed(2)) : undefined,
+      calories: item.calories || (item.kilojoules ? Math.round(item.kilojoules * 0.239) : undefined),
+      sourceApp: "Strava",
+      sourceDevice: item.device_name || "Strava App",
+      stravaId: item.id
+    };
+
+    dbData.activities.push(newActivity);
+    updateAndCalculateUserStreak(user, dbData, logTimestamp);
+    user.lastActive = logTimestamp;
+
+    // Create Feed Post
+    if (!dbData.posts) dbData.posts = [];
+    const postContent = `Sincronizei um novo treino do Strava: ${exerciseCategory} (${exerciseType}) por ${minutes} min! ${item.distance ? `Distância: ${(item.distance / 1000).toFixed(2)} km.` : ""} Corpo ativo, determinação blindada! 💪⚡`;
+    
+    const gymPics = [
+      "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=600",
+      "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=600",
+      "https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?w=600",
+      "https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=600"
+    ];
+    const postImg = gymPics[Math.floor(Math.random() * gymPics.length)];
+    const newPostId = "post-" + Math.random().toString(36).substr(2, 9);
+    const newPost = {
+      id: newPostId,
+      userId: user.id,
+      userName: user.displayName || user.name,
+      userAvatar: user.avatar,
+      userDivision: user.division,
+      userRegion: user.region,
+      content: postContent,
+      image: postImg,
+      timestamp: logTimestamp,
+      reactions: { "❤️": [], "🔥": [], "💪": [], "👏": [], "🌟": [] },
+      comments: [] as any[],
+      communityIds: []
+    };
+    dbData.posts.unshift(newPost);
+
+    console.log(`[STRAVA] Activity logged successfully: ${activityId} for user ${user.id}`);
+    return { activity: newActivity, post: newPost, successMsg };
+  }
+
+  // Helper to register Strava Push Subscription Webhook
+  async function registerStravaWebhook() {
+    if (!process.env.STRAVA_CLIENT_ID || !process.env.STRAVA_CLIENT_SECRET) {
+      console.log("[STRAVA_WEBHOOK] Credentials not set. Webhook registration skipped.");
+      return;
+    }
+    const client_id = process.env.STRAVA_CLIENT_ID;
+    const client_secret = process.env.STRAVA_CLIENT_SECRET;
+    const baseUrl = process.env.APP_BASE_URL || process.env.APP_URL || "http://localhost:3000";
+    const callbackUrl = `${baseUrl}/api/integrations/strava/webhook`;
+    const verifyToken = "bodhishape_webhook_token";
+
+    console.log(`[STRAVA_WEBHOOK] Checking subscriptions for callback URL: ${callbackUrl}`);
+    try {
+      const r = await fetch(`https://www.strava.com/api/v3/push_subscriptions?client_id=${client_id}&client_secret=${client_secret}`);
+      if (!r.ok) {
+        console.error("[STRAVA_WEBHOOK] Failed to fetch current subscriptions:", await r.text());
+        return;
+      }
+      const subs: any = await r.json();
+      console.log("[STRAVA_WEBHOOK] Current subscriptions:", subs);
+
+      const exists = subs.find((s: any) => s.callback_url === callbackUrl);
+      if (exists) {
+        console.log("[STRAVA_WEBHOOK] Webhook already registered with ID:", exists.id);
+        return;
+      }
+
+      console.log("[STRAVA_WEBHOOK] Registering new webhook subscription...");
+      const regRes = await fetch("https://www.strava.com/api/v3/push_subscriptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id,
+          client_secret,
+          callback_url: callbackUrl,
+          verify_token: verifyToken
+        })
+      });
+      const regData: any = await regRes.json();
+      if (regRes.ok) {
+        console.log("[STRAVA_WEBHOOK] Webhook registered successfully! ID:", regData.id);
+      } else {
+        console.error("[STRAVA_WEBHOOK] Registration failed:", regData);
+      }
+    } catch (error: any) {
+      console.error("[STRAVA_WEBHOOK] Exception during webhook checking/registration:", error.message);
+    }
+  }
+
   app.get("/api/integrations/strava/auth", (req: any, res: any) => {
     const { userId } = req.query;
     if (!process.env.STRAVA_CLIENT_ID) {
       return res.json({ url: "", notice: "Strava não configurado" });
     }
-    const redirectUri = `${process.env.APP_BASE_URL || "http://localhost:3000"}/api/integrations/strava/callback?userId=${userId}`;
-    const url = `https://www.strava.com/oauth/authorize?client_id=${process.env.STRAVA_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&approval_prompt=auto&scope=read,activity:read_all`;
+    const baseUrl = process.env.APP_BASE_URL || process.env.APP_URL || "http://localhost:3000";
+    const redirectUri = `${baseUrl}/api/integrations/strava/callback`;
+    const url = `https://www.strava.com/oauth/authorize?client_id=${process.env.STRAVA_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&approval_prompt=auto&scope=read,activity:read_all&state=${userId}`;
     res.json({ url });
   });
 
   app.get("/api/integrations/strava/callback", async (req: any, res: any) => {
-    const { code, userId } = req.query;
-    if (!code) return res.redirect("/?integration=strava&status=error");
+    const { code, state, userId: directUserId } = req.query;
+    const userId = directUserId || state;
+    if (!code) {
+      return res.send(`
+        <html>
+          <body>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'OAUTH_AUTH_ERROR', error: 'Missing authorization code' }, '*');
+                window.close();
+              } else {
+                window.location.href = '/?integration=strava&status=error';
+              }
+            </script>
+            <p>Erro na autenticação: Código de autorização faltando. Esta janela será fechada automaticamente.</p>
+          </body>
+        </html>
+      `);
+    }
     try {
       const r = await fetch("https://www.strava.com/oauth/token", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -4463,12 +4676,187 @@ async function setupViteServerOrProd() {
         const user = dbData.users.find((u: any) => u.id === userId);
         if (user) {
           if (!user.integrations) user.integrations = {};
-          user.integrations.strava = { accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: tokens.expires_at, connectedAt: new Date().toISOString() };
+          
+          let athleteId = tokens.athlete?.id;
+          if (!athleteId) {
+            try {
+              const athleteRes = await fetch("https://www.strava.com/api/v3/athlete", {
+                headers: { "Authorization": `Bearer ${tokens.access_token}` }
+              });
+              if (athleteRes.ok) {
+                const athleteData: any = await athleteRes.json();
+                athleteId = athleteData.id;
+              }
+            } catch (athleteErr) {
+              console.error("[STRAVA] Fallback athlete fetch failed:", athleteErr);
+            }
+          }
+
+          user.integrations.strava = {
+            accessToken: tokens.access_token,
+            refreshToken: tokens.refresh_token,
+            expiresAt: tokens.expires_at,
+            connectedAt: new Date().toISOString(),
+            athleteId: athleteId || null
+          };
           writeDB(dbData, req.idToken);
         }
       }
-      res.redirect("/?integration=strava&status=success");
-    } catch { res.redirect("/?integration=strava&status=error"); }
+      
+      res.send(`
+        <html>
+          <body>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', service: 'strava' }, '*');
+                window.close();
+              } else {
+                window.location.href = '/?integration=strava&status=success';
+              }
+            </script>
+            <p>Autenticação realizada com sucesso! Esta janela será fechada automaticamente...</p>
+          </body>
+        </html>
+      `);
+    } catch (err: any) {
+      console.error("[STRAVA_CALLBACK_ERROR]", err);
+      res.send(`
+        <html>
+          <body>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'OAUTH_AUTH_ERROR', error: ${JSON.stringify(err.message)} }, '*');
+                window.close();
+              } else {
+                window.location.href = '/?integration=strava&status=error';
+              }
+            </script>
+            <p>Erro na autenticação: ${err.message}. Esta janela será fechada automaticamente.</p>
+          </body>
+        </html>
+      `);
+    }
+  });
+
+  // Webhook Verification (GET)
+  app.get("/api/integrations/strava/webhook", (req: any, res: any) => {
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
+    
+    if (mode && token) {
+      if (mode === "subscribe" && token === "bodhishape_webhook_token") {
+        console.log("[STRAVA_WEBHOOK] Webhook verified successfully.");
+        return res.status(200).json({ "hub.challenge": challenge });
+      }
+    }
+    console.error("[STRAVA_WEBHOOK] Verification failed. Tokens or mode mismatch.");
+    res.sendStatus(403);
+  });
+
+  // Webhook Event (POST)
+  app.post("/api/integrations/strava/webhook", async (req: any, res: any) => {
+    res.status(200).json({ success: true });
+
+    const { object_type, aspect_type, object_id, owner_id } = req.body;
+    console.log(`[STRAVA_WEBHOOK] Event: object_type=${object_type}, aspect_type=${aspect_type}, object_id=${object_id}, owner_id=${owner_id}`);
+
+    if (object_type === "activity") {
+      const dbData = readDB();
+      const user = dbData.users.find((u: any) => u.integrations?.strava?.athleteId === owner_id || String(u.integrations?.strava?.athleteId) === String(owner_id));
+      
+      if (!user) {
+        console.log(`[STRAVA_WEBHOOK] No user found with Strava athlete ID: ${owner_id}`);
+        return;
+      }
+
+      if (aspect_type === "create") {
+        try {
+          const token = await getValidStravaToken(user, dbData);
+          if (!token) {
+            console.error(`[STRAVA_WEBHOOK] Could not get valid token for user ${user.id}`);
+            return;
+          }
+
+          const actRes = await fetch(`https://www.strava.com/api/v3/activities/${object_id}`, {
+            headers: { "Authorization": `Bearer ${token}` }
+          });
+          if (!actRes.ok) {
+            console.error(`[STRAVA_WEBHOOK] Failed to fetch activity ${object_id} from Strava:`, await actRes.text());
+            return;
+          }
+
+          const activityItem: any = await actRes.json();
+          const logged = logStravaActivity(user, activityItem, dbData);
+          if (logged) {
+            writeDB(dbData);
+          }
+        } catch (error: any) {
+          console.error("[STRAVA_WEBHOOK] Exception handling webhook activity creation:", error.message);
+        }
+      } else if (aspect_type === "delete") {
+        const activityId = "strava-" + object_id;
+        const originalLength = dbData.activities.length;
+        dbData.activities = dbData.activities.filter((a: any) => a.id !== activityId && a.stravaId !== object_id);
+        if (dbData.activities.length !== originalLength) {
+          dbData.posts = dbData.posts.filter((p: any) => !p.content.includes(`strava-${object_id}`) && !p.content.includes(String(object_id)));
+          writeDB(dbData);
+          console.log(`[STRAVA_WEBHOOK] Deleted activity ${activityId} and associated posts.`);
+        }
+      }
+    }
+  });
+
+  // Manual Sync Endpoint (POST)
+  app.post("/api/integrations/strava/sync", async (req: any, res: any) => {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ error: "userId obrigatório" });
+
+    const dbData = readDB();
+    const user = dbData.users.find((u: any) => u.id === userId);
+    if (!user) return res.status(404).json({ error: "Usuário não encontrado" });
+
+    const token = await getValidStravaToken(user, dbData);
+    if (!token) return res.status(400).json({ error: "Strava não está conectado ou token inválido" });
+
+    try {
+      const r = await fetch("https://www.strava.com/api/v3/athlete/activities?per_page=10", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      
+      if (r.status === 429) {
+        return res.status(429).json({ error: "Limite de requisições da API do Strava excedido (Rate Limit). Por favor, tente novamente mais tarde." });
+      }
+      
+      if (!r.ok) {
+        const errText = await r.text();
+        console.error("[STRAVA_SYNC] Error fetching activities:", errText);
+        return res.status(500).json({ error: `Erro ao buscar atividades no Strava: ${r.statusText}` });
+      }
+
+      const acts: any = await r.json();
+      let count = 0;
+      const synced: any[] = [];
+
+      if (Array.isArray(acts)) {
+        for (const item of acts) {
+          const logged = logStravaActivity(user, item, dbData);
+          if (logged) {
+            count++;
+            synced.push(logged.activity);
+          }
+        }
+      }
+
+      if (count > 0) {
+        writeDB(dbData);
+      }
+
+      res.json({ success: true, count, synced });
+    } catch (err: any) {
+      console.error("[STRAVA_SYNC_EXCEPTION]", err);
+      res.status(500).json({ error: err.message || "Erro durante a sincronização" });
+    }
   });
 
   app.get("/api/integrations/google-fit/auth", (req: any, res: any) => {
@@ -4523,15 +4911,30 @@ async function setupViteServerOrProd() {
     if (!userId) return res.status(400).json({ error: "userId obrigatorio" });
     const dbData = readDB();
     const user = dbData.users.find((u: any) => u.id === userId);
-    const token = user?.integrations?.strava?.accessToken;
+    if (!user) return res.json([]);
+    const token = await getValidStravaToken(user, dbData);
     if (!token) return res.json([]);
     try {
       const r = await fetch("https://www.strava.com/api/v3/athlete/activities?per_page=5", {
         headers: { "Authorization": `Bearer ${token}` }
       });
+      if (r.status === 429) {
+        console.error("[STRAVA] Rate Limit hit.");
+        return res.json([]);
+      }
       if (!r.ok) return res.json([]);
       const acts: any = await r.json();
-      res.json(acts.map((a: any) => ({ id: "strava-" + a.id, name: a.name, type: a.type, distanceKm: a.distance ? a.distance / 1000 : 0, movingTime: a.moving_time, startDate: a.start_date, calories: a.calories || 0 })));
+      res.json(acts.map((a: any) => ({
+        id: a.id,
+        name: a.name,
+        type: a.type,
+        distance: a.distance,
+        moving_time: a.moving_time,
+        elapsed_time: a.elapsed_time,
+        start_date_local: a.start_date_local,
+        start_date: a.start_date,
+        calories: a.calories || 0
+      })));
     } catch { res.json([]); }
   });
 
@@ -4558,6 +4961,10 @@ async function setupViteServerOrProd() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[BODHISATTVAS DO SHAPE] Server is up on http://localhost:${PORT}`);
+    // Register Strava Webhook after 5 seconds to ensure the server is ready to receive the verification challenge
+    setTimeout(() => {
+      registerStravaWebhook().catch(err => console.error("[STRAVA_WEBHOOK_INIT_FAILED]", err));
+    }, 5000);
   });
 }
 

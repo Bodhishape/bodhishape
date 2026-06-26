@@ -389,6 +389,156 @@ export default function App() {
     localStorage.setItem("bodhishape_connected_devices", JSON.stringify(connectedDevices));
   }, [connectedDevices]);
 
+  // --- REAL STRAVA CONNECTOR & MANUAL/AUTO SYNC ACTIONS ---
+  const [isSyncingStrava, setIsSyncingStrava] = useState(false);
+  const hasAutoSyncedRef = useRef<Record<string, boolean>>({});
+
+  const connectStrava = async () => {
+    if (!currentUser?.id) {
+      alert("Por favor, faça login antes de conectar o Strava.");
+      return;
+    }
+    const confirmAuth = window.confirm(
+      "Deseja autorizar o BodhiShape a integrar e sincronizar as atividades com sua conta oficial do Strava?\n\nSerão importadas as métricas reais de treinos realizados."
+    );
+    if (!confirmAuth) return;
+
+    try {
+      const res = await fetch(`/api/integrations/strava/auth?userId=${currentUser.id}`);
+      if (!res.ok) throw new Error("Não foi possível gerar a URL de autorização");
+      const data = await res.json();
+      
+      if (data.url) {
+        const authPopup = window.open(
+          data.url,
+          "strava_oauth_popup",
+          "width=600,height=700,status=no,resizable=yes"
+        );
+        if (!authPopup) {
+          alert("Por favor, permita popups para este site para completar a integração.");
+        }
+      } else {
+        alert(data.notice || "Configuração do Strava indisponível.");
+      }
+    } catch (err: any) {
+      alert(err.message || "Erro ao conectar com o Strava.");
+    }
+  };
+
+  const disconnectStrava = async () => {
+    if (!currentUser?.id) return;
+    const confirmDisconnect = window.confirm(
+      "Tem certeza que deseja desvincular a sua conta do Strava?\n\nIsso removerá os tokens correspondentes da nuvem."
+    );
+    if (!confirmDisconnect) return;
+
+    try {
+      const res = await fetch(`/api/integrations/save-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: currentUser.id,
+          service: "strava",
+          accessToken: "",
+          refreshToken: "",
+          expiresAt: 0
+        })
+      });
+      if (res.ok) {
+        setConnectedDevices(prev => prev.filter(d => d !== "strava"));
+        if (hasAutoSyncedRef.current[currentUser.id]) {
+          delete hasAutoSyncedRef.current[currentUser.id];
+        }
+        fetchAllData(currentUser.id);
+        setLoggerSuccessMsg("Strava desconectado com sucesso.");
+      }
+    } catch (err) {
+      console.error("Erro ao desconectar Strava:", err);
+    }
+  };
+
+  const syncStrava = async () => {
+    if (!currentUser?.id) return;
+    setIsSyncingStrava(true);
+    setLoggerSuccessMsg(null);
+    try {
+      const res = await fetch(`/api/integrations/strava/sync?userId=${currentUser.id}`, {
+        method: "POST"
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (data.count > 0) {
+          setLoggerSuccessMsg(`Sincronização concluída com sucesso! Sincronizados ${data.count} novos treinos no BodhiShape. 🎉`);
+          fetchAllData(currentUser.id);
+        } else {
+          setLoggerSuccessMsg("Sincronização concluída! Suas atividades já estão atualizadas.");
+        }
+      } else {
+        alert(data.error || "Erro durante a sincronização do Strava.");
+      }
+    } catch (err: any) {
+      console.error("Erro na sincronização:", err);
+      alert("Falha de comunicação com o servidor de sincronização.");
+    } finally {
+      setIsSyncingStrava(false);
+    }
+  };
+
+  // Keep connectedDevices state synchronized with real backend user integrations
+  useEffect(() => {
+    if (currentUser?.integrations?.strava?.accessToken) {
+      if (!connectedDevices.includes("strava")) {
+        setConnectedDevices(prev => [...prev, "strava"]);
+      }
+    } else {
+      if (connectedDevices.includes("strava")) {
+        setConnectedDevices(prev => prev.filter(d => d !== "strava"));
+      }
+    }
+  }, [currentUser?.integrations?.strava?.accessToken]);
+
+  // Hook into successful authentication message events from child popups
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const origin = event.origin;
+      if (!origin.endsWith('.run.app') && !origin.includes('localhost')) {
+        return;
+      }
+      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+        if (currentUser?.id) {
+          fetchAllData(currentUser.id);
+          setLoggerSuccessMsg(`Integração com Strava realizada com sucesso e armazenada de forma persistente!`);
+        }
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [currentUser?.id]);
+
+  // Automatic background sync on startup/mounting or user swap
+  useEffect(() => {
+    if (currentUser?.id && currentUser?.integrations?.strava?.accessToken) {
+      if (!hasAutoSyncedRef.current[currentUser.id]) {
+        hasAutoSyncedRef.current[currentUser.id] = true;
+        console.log(`[STRAVA] Iniciando auto-sincronização em segundo plano para o usuário ${currentUser.id}...`);
+        fetch(`/api/integrations/strava/sync?userId=${currentUser.id}`, { method: "POST" })
+          .then(res => {
+            if (res.ok) return res.json();
+            throw new Error("Falha ao sincronizar");
+          })
+          .then(data => {
+            if (data?.success) {
+              console.log(`[STRAVA] Auto-sincronização concluída. Novos treinos: ${data.count}`);
+              if (data.count > 0) {
+                fetchAllData(currentUser.id);
+              }
+            }
+          })
+          .catch(err => console.error("[STRAVA] Erro na auto-sincronização:", err));
+      }
+    }
+  }, [currentUser?.id, currentUser?.integrations?.strava?.accessToken]);
+
   // Simulated activity for smart detection popup
   const [simulatedActivity, setSimulatedActivity] = useState<{
     type: "exercise" | "daimoku" | "gongyo_morning" | "gongyo_evening";
@@ -3707,24 +3857,48 @@ export default function App() {
                             <p className="text-[10px] text-slate-400 mt-1 line-clamp-2 leading-snug">{device.desc}</p>
                           </div>
 
-                          <div className="pt-2 border-t border-slate-800/30 mt-2">
+                          <div className="pt-2 border-t border-slate-800/30 mt-2 space-y-1.5">
                             {isConnected ? (
-                              <button
-                                onClick={() => {
-                                  const updated = connectedDevices.filter(d => d !== device.id);
-                                  setConnectedDevices(updated);
-                                  setLoggerSuccessMsg(`${device.name} desconectado com sucesso.`);
-                                }}
-                                className="w-full text-center text-[10px] font-extrabold text-rose-400 hover:text-rose-350 bg-rose-500/5 hover:bg-rose-500/15 p-1.5 rounded-lg border border-rose-500/10 transition cursor-pointer"
-                              >
-                                Desconectar relógio ⛔
-                              </button>
+                              <>
+                                {device.id === "strava" ? (
+                                  <>
+                                    <button
+                                      onClick={syncStrava}
+                                      disabled={isSyncingStrava}
+                                      className="w-full text-center text-[10px] font-extrabold text-teal-300 hover:text-teal-200 bg-teal-500/10 hover:bg-teal-500/25 p-1.5 rounded-lg border border-teal-500/20 transition cursor-pointer disabled:opacity-50"
+                                    >
+                                      {isSyncingStrava ? "Sincronizando... 🔄" : "Sincronizar Agora ⚡"}
+                                    </button>
+                                    <button
+                                      onClick={disconnectStrava}
+                                      className="w-full text-center text-[10px] font-extrabold text-rose-400 hover:text-rose-350 bg-rose-500/5 hover:bg-rose-500/15 p-1.5 rounded-lg border border-rose-500/10 transition cursor-pointer"
+                                    >
+                                      Desconectar relógio ⛔
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    onClick={() => {
+                                      const updated = connectedDevices.filter(d => d !== device.id);
+                                      setConnectedDevices(updated);
+                                      setLoggerSuccessMsg(`${device.name} desconectado com sucesso.`);
+                                    }}
+                                    className="w-full text-center text-[10px] font-extrabold text-rose-400 hover:text-rose-350 bg-rose-500/5 hover:bg-rose-500/15 p-1.5 rounded-lg border border-rose-500/10 transition cursor-pointer"
+                                  >
+                                    Desconectar relógio ⛔
+                                  </button>
+                                )}
+                              </>
                             ) : (
                               <button
                                 onClick={() => {
-                                  const updated = [...connectedDevices, device.id];
-                                  setConnectedDevices(updated);
-                                  setLoggerSuccessMsg(`Conectado ao ${device.name}! Permissões de importação de saúde concedidas com sucesso. 🎉`);
+                                  if (device.id === "strava") {
+                                    connectStrava();
+                                  } else {
+                                    const updated = [...connectedDevices, device.id];
+                                    setConnectedDevices(updated);
+                                    setLoggerSuccessMsg(`Conectado ao ${device.name}! Permissões de importação de saúde concedidas com sucesso. 🎉`);
+                                  }
                                 }}
                                 className="w-full text-center text-[10px] font-extrabold text-teal-300 hover:text-teal-200 bg-teal-500/10 hover:bg-teal-500/25 p-1.5 rounded-lg border border-teal-500/20 transition cursor-pointer"
                               >
