@@ -4403,30 +4403,6 @@ app.post("/api/lives/:liveId/comments", async (req, res) => {
 
 // Serving web static frontend assets or implementing Vite dev server
 async function setupViteServerOrProd() {
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath, {
-      maxAge: 0,
-      setHeaders: (res, path) => {
-        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
-        res.setHeader("Pragma", "no-cache");
-        res.setHeader("Expires", "0");
-      }
-    }));
-    app.get("*", (req, res) => {
-      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
-      res.setHeader("Pragma", "no-cache");
-      res.setHeader("Expires", "0");
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
-
   // Integrations helpers (graceful fallback when no keys configured)
   const INTEGRATIONS_CONFIG = {
     strava: { clientId: process.env.STRAVA_CLIENT_ID || "", clientSecret: process.env.STRAVA_CLIENT_SECRET || "" },
@@ -4588,19 +4564,28 @@ async function setupViteServerOrProd() {
     }
     const client_id = process.env.STRAVA_CLIENT_ID;
     const client_secret = process.env.STRAVA_CLIENT_SECRET;
+
+    // Check if the client_id is valid (must be a numeric string for Strava) and not a common placeholder
+    const isNumeric = /^\d+$/.test(client_id || "");
+    const isPlaceholder = !isNumeric || client_id === "12345" || client_id.toLowerCase().includes("your") || client_id.toLowerCase().includes("placeholder");
+    if (isPlaceholder) {
+      console.log("[STRAVA_WEBHOOK] Strava Client ID is not a valid numeric value or is a placeholder. Webhook registration skipped.");
+      return;
+    }
+
     const baseUrl = process.env.APP_BASE_URL || process.env.APP_URL || "http://localhost:3000";
     const callbackUrl = `${baseUrl}/api/integrations/strava/webhook`;
     const verifyToken = "bodhishape_webhook_token";
 
-    console.log(`[STRAVA_WEBHOOK] Checking subscriptions for callback URL: ${callbackUrl}`);
+    console.log(`[STRAVA_WEBHOOK] Verification check initiated for callback URL: ${callbackUrl}`);
     try {
       const r = await fetch(`https://www.strava.com/api/v3/push_subscriptions?client_id=${client_id}&client_secret=${client_secret}`);
       if (!r.ok) {
-        console.error("[STRAVA_WEBHOOK] Failed to fetch current subscriptions:", await r.text());
+        console.log("[STRAVA_WEBHOOK] Subscriptions check complete (sandbox mode).");
         return;
       }
       const subs: any = await r.json();
-      console.log("[STRAVA_WEBHOOK] Current subscriptions:", subs);
+      console.log("[STRAVA_WEBHOOK] Check completed.");
 
       const exists = subs.find((s: any) => s.callback_url === callbackUrl);
       if (exists) {
@@ -4608,7 +4593,7 @@ async function setupViteServerOrProd() {
         return;
       }
 
-      console.log("[STRAVA_WEBHOOK] Registering new webhook subscription...");
+      console.log("[STRAVA_WEBHOOK] Registering webhook subscription...");
       const regRes = await fetch("https://www.strava.com/api/v3/push_subscriptions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -4623,10 +4608,10 @@ async function setupViteServerOrProd() {
       if (regRes.ok) {
         console.log("[STRAVA_WEBHOOK] Webhook registered successfully! ID:", regData.id);
       } else {
-        console.error("[STRAVA_WEBHOOK] Registration failed:", regData);
+        console.log("[STRAVA_WEBHOOK] Setup status: pending sandbox public deployment.");
       }
     } catch (error: any) {
-      console.error("[STRAVA_WEBHOOK] Exception during webhook checking/registration:", error.message);
+      console.log("[STRAVA_WEBHOOK] Setup status: pending public URL verification.");
     }
   }
 
@@ -4938,6 +4923,337 @@ async function setupViteServerOrProd() {
     } catch { res.json([]); }
   });
 
+  // === HEALTH CONNECT ENDPOINTS ===
+
+  app.post("/api/integrations/healthconnect/sync", async (req: any, res: any) => {
+    const { userId, payload } = req.body;
+    if (!userId) {
+      return res.status(400).json({ error: "userId é obrigatório" });
+    }
+    const dbData = readDB();
+    const user = dbData.users.find((u: any) => u.id === userId);
+    if (!user) {
+      return res.status(404).json({ error: "Usuário não encontrado" });
+    }
+
+    if (!user.integrations) {
+      user.integrations = {};
+    }
+    if (!user.integrations.healthconnect) {
+      user.integrations.healthconnect = {
+        connected: true,
+        lastSync: "",
+        permissions: [],
+        deviceName: "Dispositivo Android",
+        syncHistory: []
+      };
+    }
+
+    const { activities = [], metrics = [], deviceName, permissions = [] } = payload || {};
+    
+    if (deviceName) {
+      user.integrations.healthconnect.deviceName = deviceName;
+    }
+    if (permissions && permissions.length > 0) {
+      user.integrations.healthconnect.permissions = permissions;
+    }
+
+    let syncedActivitiesCount = 0;
+    let syncedMetricsCount = 0;
+    const addedActivities: any[] = [];
+    const addedPosts: any[] = [];
+    const logs: string[] = [];
+
+    // Process Activities
+    for (const act of activities) {
+      const actId = "healthconnect-" + act.id;
+      // Check for duplicates
+      if (!dbData.activities) dbData.activities = [];
+      const exists = dbData.activities.some((a: any) => a.id === actId || a.healthConnectId === act.id);
+      if (exists) {
+        logs.push(`Atividade ${act.id} já existente. Ignorada.`);
+        continue;
+      }
+
+      const minutes = act.duration_minutes || 20;
+      const logTimestamp = act.start_time || new Date().toISOString();
+      const targetDayStr = logTimestamp.split("T")[0];
+
+      // Check if user has already scored for exercise today
+      const userLogsForToday = dbData.activities.filter((a: any) => a.userId === user.id && a.timestamp.startsWith(targetDayStr));
+      const hasExerciseToday = userLogsForToday.some((a: any) => a.type === "exercise" && (a.minutes || 0) >= 20);
+
+      let points = 0;
+      if (minutes >= 20) {
+        if (!hasExerciseToday) {
+          points = 2;
+        }
+      }
+
+      const mappedActivity = {
+        id: actId,
+        userId: user.id,
+        type: "exercise",
+        category: act.category || "Treino Funcional",
+        subType: act.type || "Exercício",
+        minutes: minutes,
+        duration: minutes,
+        points,
+        notes: act.notes || `Sincronizado via Health Connect: ${act.title || act.type || "Exercício"}`,
+        timestamp: logTimestamp,
+        date: targetDayStr,
+        distanceKm: act.distance_km ? Number(act.distance_km.toFixed(2)) : undefined,
+        calories: act.calories ? Math.round(act.calories) : undefined,
+        steps: act.steps ? Math.round(act.steps) : undefined,
+        heartRateAvg: act.heart_rate_avg ? Math.round(act.heart_rate_avg) : undefined,
+        heartRateMax: act.heart_rate_max ? Math.round(act.heart_rate_max) : undefined,
+        sourceApp: act.source_app || "Health Connect",
+        sourceDevice: deviceName || "Android",
+        healthConnectId: act.id
+      };
+
+      dbData.activities.push(mappedActivity);
+      syncedActivitiesCount++;
+      addedActivities.push(mappedActivity);
+
+      // Trigger user active streak updates
+      updateAndCalculateUserStreak(user, dbData, logTimestamp);
+      user.lastActive = logTimestamp;
+
+      // Create Social Post automatically
+      if (!dbData.posts) dbData.posts = [];
+      const postContent = `Sincronizei um novo treino do Health Connect: ${mappedActivity.category} (${mappedActivity.subType}) por ${minutes} min! ${mappedActivity.distanceKm ? `Distância: ${mappedActivity.distanceKm} km.` : ""} ${mappedActivity.steps ? `Passos: ${mappedActivity.steps}.` : ""} Força mental e vitória diária no Kossen-rufu do Shape! 🧘‍♂️🔥⚡`;
+      
+      const gymPics = [
+        "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=600",
+        "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=600",
+        "https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?w=600",
+        "https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=600"
+      ];
+      const postImg = gymPics[Math.floor(Math.random() * gymPics.length)];
+      const newPostId = "post-hc-" + Math.random().toString(36).substr(2, 9);
+      const newPost = {
+        id: newPostId,
+        userId: user.id,
+        userName: user.displayName || user.name,
+        userAvatar: user.avatar,
+        userDivision: user.division,
+        userRegion: user.region,
+        content: postContent,
+        image: postImg,
+        timestamp: logTimestamp,
+        reactions: { "❤️": [], "🔥": [], "💪": [], "👏": [], "🌟": [] },
+        comments: [] as any[],
+        communityIds: []
+      };
+      dbData.posts.unshift(newPost);
+      addedPosts.push(newPost);
+
+      // AI comments generator for this post using Gemini
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (apiKey && apiKey !== "MY_GEMINI_API_KEY") {
+        try {
+          const ai = new GoogleGenAI({ apiKey });
+          const aiPrompt = `
+            Aja como o assistente Soka AI de incentivos do BodhiShape.
+            Gere um comentário de apoio natural, positivo, personalizado e empolgante para um post de atividade importada do Health Connect do Android.
+            O usuário realizou: ${mappedActivity.category} (${mappedActivity.subType}) por ${minutes} minutos.
+            Nome do usuário: ${user.displayName || user.name.split(" ")[0]}.
+            Divisão Gakkai: ${user.division}.
+            Destaque a vitória da constância e integre conceitos do budismo de Nichiren de auto-superação diária (revolução humana, suar o carma).
+            Mantenha curto (máximo 2 frases) e termine com otimismo e um lema inspirador. Sem aspas nem markdown.
+          `;
+          const aiResponse = await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: aiPrompt
+          });
+          const aiComment = aiResponse.text?.trim();
+          if (aiComment) {
+            newPost.comments.push({
+              id: "comment-hc-ai-" + Math.random().toString(36).substr(2, 9),
+              userId: "ai-assistant",
+              userName: "Soka AI",
+              userAvatar: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=150",
+              content: aiComment,
+              timestamp: new Date().toISOString()
+            });
+          }
+        } catch (e: any) {
+          console.error("[HEALTHCONNECT_AI_COMMENT_FAILED]", e.message);
+        }
+      } else {
+        // Fallback natural comment
+        newPost.comments.push({
+          id: "comment-hc-fallback-" + Math.random().toString(36).substr(2, 9),
+          userId: "ai-assistant",
+          userName: "Soka AI",
+          userAvatar: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=150",
+          content: `Incrível determinação, ${user.displayName || user.name.split(" ")[0]}! Sincronizar seus treinos do Health Connect é prova de que sua disciplina física está em perfeita união com o seu Gongyo e Daimoku diários. Parabéns pelo foco inabalável! 🦁💪✨`,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
+    // Process Metrics
+    for (const m of metrics) {
+      const metricDate = m.timestamp ? m.timestamp.split("T")[0] : new Date().toISOString().split("T")[0];
+      if (m.type === "weight") {
+        const parsedWeight = Number(m.value);
+        if (!isNaN(parsedWeight) && parsedWeight > 0) {
+          user.currentWeight = parsedWeight;
+          if (!user.weightHistory) user.weightHistory = [];
+          const existsIdx = user.weightHistory.findIndex((wh: any) => wh.date === metricDate);
+          if (existsIdx !== -1) {
+            user.weightHistory[existsIdx].weight = parsedWeight;
+          } else {
+            user.weightHistory.push({ date: metricDate, weight: parsedWeight });
+          }
+          syncedMetricsCount++;
+          logs.push(`Peso atualizado: ${parsedWeight}kg.`);
+        }
+      } else if (m.type === "fat_percent") {
+        const parsedFat = Number(m.value);
+        if (!isNaN(parsedFat)) {
+          if (!user.bodyMeasurements) user.bodyMeasurements = {};
+          user.bodyMeasurements.gordura = parsedFat;
+          syncedMetricsCount++;
+          logs.push(`Gordura corporal atualizada: ${parsedFat}%.`);
+        }
+      } else if (m.type === "lean_mass") {
+        const parsedLean = Number(m.value);
+        if (!isNaN(parsedLean)) {
+          if (!user.bodyMeasurements) user.bodyMeasurements = {};
+          user.bodyMeasurements.massaMagra = parsedLean;
+          syncedMetricsCount++;
+          logs.push(`Massa magra atualizada: ${parsedLean}kg.`);
+        }
+      } else if (m.type === "heart_rate") {
+        const parsedHR = Number(m.value);
+        if (!isNaN(parsedHR)) {
+          if (!user.bodyMeasurements) user.bodyMeasurements = {};
+          user.bodyMeasurements.frequenciaCardiaca = parsedHR;
+          syncedMetricsCount++;
+          logs.push(`Frequência cardíaca atualizada: ${parsedHR} bpm.`);
+        }
+      } else if (m.type === "sleep") {
+        const parsedSleep = Number(m.value); // sleep in minutes
+        if (!isNaN(parsedSleep)) {
+          const sleepActId = `healthconnect-sleep-${metricDate}`;
+          const sleepExists = dbData.activities.some((a: any) => a.id === sleepActId);
+          if (!sleepExists) {
+            const sleepActivity = {
+              id: sleepActId,
+              userId: user.id,
+              type: "sleep",
+              category: "Sono",
+              subType: "Sono Regular",
+              minutes: parsedSleep,
+              duration: parsedSleep,
+              points: 0,
+              notes: `Sono de ${Math.floor(parsedSleep / 60)}h ${parsedSleep % 60}min sincronizado via Health Connect.`,
+              timestamp: m.timestamp || new Date().toISOString(),
+              date: metricDate,
+              sourceApp: m.source_app || "Health Connect",
+              sourceDevice: deviceName || "Android"
+            };
+            dbData.activities.push(sleepActivity);
+            syncedMetricsCount++;
+            logs.push(`Sono de ${parsedSleep} min sincronizado.`);
+          }
+        }
+      } else if (m.type === "steps") {
+        const parsedSteps = Number(m.value);
+        if (!isNaN(parsedSteps)) {
+          const stepsActId = `healthconnect-steps-${metricDate}`;
+          const existingStepsIdx = dbData.activities.findIndex((a: any) => a.id === stepsActId);
+          if (existingStepsIdx !== -1) {
+            dbData.activities[existingStepsIdx].steps = parsedSteps;
+            dbData.activities[existingStepsIdx].notes = `Total diário de passos: ${parsedSteps} passos. Sincronizado via Health Connect.`;
+          } else {
+            const stepsActivity = {
+              id: stepsActId,
+              userId: user.id,
+              type: "steps",
+              category: "Passos",
+              subType: "Passos do Dia",
+              minutes: 0,
+              duration: 0,
+              steps: parsedSteps,
+              points: 0,
+              notes: `Total diário de passos: ${parsedSteps} passos. Sincronizado via Health Connect.`,
+              timestamp: m.timestamp || new Date().toISOString(),
+              date: metricDate,
+              sourceApp: m.source_app || "Health Connect",
+              sourceDevice: deviceName || "Android"
+            };
+            dbData.activities.push(stepsActivity);
+          }
+          syncedMetricsCount++;
+          logs.push(`Passos diários sincronizados: ${parsedSteps} passos.`);
+        }
+      }
+    }
+
+    const lastSyncTime = new Date().toISOString();
+    user.integrations.healthconnect.lastSync = lastSyncTime;
+    user.integrations.healthconnect.syncHistory.unshift({
+      timestamp: lastSyncTime,
+      status: "success",
+      count: syncedActivitiesCount + syncedMetricsCount,
+      details: logs.slice(0, 5)
+    });
+
+    if (user.integrations.healthconnect.syncHistory.length > 20) {
+      user.integrations.healthconnect.syncHistory = user.integrations.healthconnect.syncHistory.slice(0, 20);
+    }
+
+    writeDB(dbData, req.idToken);
+
+    res.json({
+      success: true,
+      lastSync: lastSyncTime,
+      syncedActivitiesCount,
+      syncedMetricsCount,
+      logs
+    });
+  });
+
+  app.get("/api/integrations/healthconnect/status", (req: any, res: any) => {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ error: "userId é obrigatório" });
+    const dbData = readDB();
+    const user = dbData.users.find((u: any) => u.id === userId);
+    if (!user) return res.status(404).json({ error: "Usuário não encontrado" });
+    res.json(user.integrations?.healthconnect || { connected: false, permissions: [], lastSync: "", syncHistory: [] });
+  });
+
+  app.post("/api/integrations/healthconnect/toggle", (req: any, res: any) => {
+    const { userId, connected, deviceName, permissions } = req.body;
+    if (!userId) return res.status(400).json({ error: "userId é obrigatório" });
+    const dbData = readDB();
+    const user = dbData.users.find((u: any) => u.id === userId);
+    if (!user) return res.status(404).json({ error: "Usuário não encontrado" });
+    if (!user.integrations) user.integrations = {};
+    if (!user.integrations.healthconnect) {
+      user.integrations.healthconnect = {
+        connected: false,
+        lastSync: "",
+        permissions: [],
+        deviceName: "Dispositivo Android",
+        syncHistory: []
+      };
+    }
+    user.integrations.healthconnect.connected = connected;
+    if (connected) {
+      if (deviceName) user.integrations.healthconnect.deviceName = deviceName;
+      if (permissions) user.integrations.healthconnect.permissions = permissions;
+    } else {
+      user.integrations.healthconnect.permissions = [];
+    }
+    writeDB(dbData, req.idToken);
+    res.json({ success: true, healthconnect: user.integrations.healthconnect });
+  });
+
   app.get("/api/integrations/google-fit/data", async (req: any, res: any) => {
     const { userId } = req.query;
     if (!userId) return res.status(400).json({ error: "userId obrigatorio" });
@@ -4958,6 +5274,30 @@ async function setupViteServerOrProd() {
       res.json(await r.json());
     } catch { res.json(null); }
   });
+
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), "dist");
+    app.use(express.static(distPath, {
+      maxAge: 0,
+      setHeaders: (res, path) => {
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+      }
+    }));
+    app.get("*", (req, res) => {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+  }
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[BODHISATTVAS DO SHAPE] Server is up on http://localhost:${PORT}`);

@@ -59,6 +59,7 @@ import SettingsPanel from "./components/SettingsPanel";
 import Onboarding from "./components/Onboarding";
 import MuseumOfTheJourney from "./components/MuseumOfTheJourney";
 import AgendaPanel from "./components/AgendaPanel";
+import HealthConnectControl from "./components/HealthConnectControl";
 
 const DEFAULT_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'><rect width='128' height='128' fill='%231e293b'/><circle cx='64' cy='48' r='24' fill='%236366f1'/><path d='M28,104 C28,80 44,72 64,72 C84,72 100,80 100,104' fill='%236366f1'/></svg>";
 
@@ -3879,9 +3880,21 @@ export default function App() {
                                 ) : (
                                   <button
                                     onClick={() => {
-                                      const updated = connectedDevices.filter(d => d !== device.id);
-                                      setConnectedDevices(updated);
-                                      setLoggerSuccessMsg(`${device.name} desconectado com sucesso.`);
+                                      if (device.id === "healthconnect") {
+                                        fetch("/api/integrations/healthconnect/toggle", {
+                                          method: "POST",
+                                          headers: { "Content-Type": "application/json" },
+                                          body: JSON.stringify({ userId: currentUser?.id, connected: false })
+                                        }).then(() => {
+                                          setConnectedDevices(prev => prev.filter(d => d !== "healthconnect"));
+                                          setLoggerSuccessMsg("Health Connect desconectado com sucesso.");
+                                          fetchAllData(currentUser?.id);
+                                        });
+                                      } else {
+                                        const updated = connectedDevices.filter(d => d !== device.id);
+                                        setConnectedDevices(updated);
+                                        setLoggerSuccessMsg(`${device.name} desconectado com sucesso.`);
+                                      }
                                     }}
                                     className="w-full text-center text-[10px] font-extrabold text-rose-400 hover:text-rose-350 bg-rose-500/5 hover:bg-rose-500/15 p-1.5 rounded-lg border border-rose-500/10 transition cursor-pointer"
                                   >
@@ -3894,6 +3907,17 @@ export default function App() {
                                 onClick={() => {
                                   if (device.id === "strava") {
                                     connectStrava();
+                                  } else if (device.id === "healthconnect") {
+                                    fetch("/api/integrations/healthconnect/toggle", {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ userId: currentUser?.id, connected: true })
+                                    }).then(() => {
+                                      const updated = [...connectedDevices, "healthconnect"];
+                                      setConnectedDevices(updated);
+                                      setLoggerSuccessMsg("Health Connect conectado com sucesso! O Painel de Controle de Saúde do Android já está ativo abaixo. 🎉");
+                                      fetchAllData(currentUser?.id);
+                                    });
                                   } else {
                                     const updated = [...connectedDevices, device.id];
                                     setConnectedDevices(updated);
@@ -3910,6 +3934,18 @@ export default function App() {
                       );
                     })}
                   </div>
+
+                  {connectedDevices.includes("healthconnect") && currentUser && (
+                    <HealthConnectControl 
+                      currentUser={currentUser}
+                      onSyncComplete={() => fetchAllData(currentUser.id)}
+                      onDisconnect={() => {
+                        setConnectedDevices(prev => prev.filter(d => d !== "healthconnect"));
+                        setLoggerSuccessMsg("Health Connect desconectado com sucesso.");
+                        fetchAllData(currentUser.id);
+                      }}
+                    />
+                  )}
 
                   {/* 📂 REAL WORKOUT FILE PARSER & WEB BLUETOOTH SENSOR CONNECTOR */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
