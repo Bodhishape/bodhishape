@@ -27,15 +27,17 @@ interface MuralVitoriasProps {
   currentUser: User | null;
   onSelectUser: (user: User) => void;
   firebaseAuth?: any;
+  communityId?: string;
 }
 
-export default function MuralVitorias({ currentUser, onSelectUser, firebaseAuth }: MuralVitoriasProps) {
+export default function MuralVitorias({ currentUser, onSelectUser, firebaseAuth, communityId }: MuralVitoriasProps) {
   const [stories, setStories] = useState<VictoryStory[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Fetch real stories from backend
   React.useEffect(() => {
-    fetch("/api/stories")
+    const url = communityId ? `/api/stories?communityId=${communityId}` : "/api/stories";
+    fetch(url)
       .then(res => res.json())
       .then(data => {
         setStories(Array.isArray(data) ? data : []);
@@ -45,7 +47,7 @@ export default function MuralVitorias({ currentUser, onSelectUser, firebaseAuth 
         console.error("Erro ao carregar relatos de vitória:", err);
         setLoading(false);
       });
-  }, []);
+  }, [communityId]);
 
   const [category, setCategory] = useState<VictoryStory["category"]>("beneficio");
   const [title, setTitle] = useState("");

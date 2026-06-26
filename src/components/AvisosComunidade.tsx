@@ -24,9 +24,10 @@ interface Notice {
 interface AvisosComunidadeProps {
   currentUser: User | null;
   firebaseAuth?: any;
+  communityId?: string;
 }
 
-export default function AvisosComunidade({ currentUser, firebaseAuth }: AvisosComunidadeProps) {
+export default function AvisosComunidade({ currentUser, firebaseAuth, communityId }: AvisosComunidadeProps) {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -50,12 +51,13 @@ export default function AvisosComunidade({ currentUser, firebaseAuth }: AvisosCo
   // Fetch notices on mount
   useEffect(() => {
     fetchNotices();
-  }, []);
+  }, [communityId]);
 
   const fetchNotices = async () => {
     try {
       setIsLoading(true);
-      const res = await fetch("/api/notices");
+      const url = communityId ? `/api/notices?communityId=${communityId}` : "/api/notices";
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setNotices(data);
@@ -125,7 +127,8 @@ export default function AvisosComunidade({ currentUser, firebaseAuth }: AvisosCo
         target: formTarget,
         maxProgress: formMaxProgress ? Number(formMaxProgress) : null,
         currentProgress: editingNotice ? editingNotice.currentProgress : 0,
-        color: formColor
+        color: formColor,
+        communityId
       };
 
       const headers: Record<string, string> = { "Content-Type": "application/json" };

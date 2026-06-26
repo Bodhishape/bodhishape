@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Award, Search, Trophy, MapPin, Layers, Flame, Dumbbell, Zap } from "lucide-react";
 import { motion } from "motion/react";
 import { User, Activity, LeaderboardUser } from "../types";
@@ -7,11 +7,25 @@ interface LeaderboardsProps {
   users: User[];
   activities: Activity[];
   onSelectUser?: (user: User) => void;
+  communityId?: string;
 }
 
-export default function Leaderboards({ users, activities, onSelectUser }: LeaderboardsProps) {
+export default function Leaderboards({ users, activities, onSelectUser, communityId }: LeaderboardsProps) {
   const [boardType, setBoardType] = useState<"principal" | "daimoku" | "exercicio" | "streak">("principal");
   
+  const [localLeaderboard, setLocalLeaderboard] = useState<any[] | null>(null);
+
+  useEffect(() => {
+    if (communityId) {
+      fetch(`/api/leaderboard?communityId=${communityId}`)
+        .then(res => res.json())
+        .then(data => setLocalLeaderboard(Array.isArray(data) ? data : []))
+        .catch(err => console.error(err));
+    } else {
+      setLocalLeaderboard(null);
+    }
+  }, [communityId, users, activities]);
+
   // Filtering state
   const [divisionFilter, setDivisionFilter] = useState<string>("ALL");
   const [regionFilter, setRegionFilter] = useState<string>("ALL");
@@ -26,6 +40,29 @@ export default function Leaderboards({ users, activities, onSelectUser }: Leader
 
   // Helper function to calculate each user's stats
   const calculateLeaderboards = (): LeaderboardUser[] => {
+    if (localLeaderboard) {
+      return localLeaderboard.map((item: any) => {
+        const u = users.find(x => x.id === item.userId) || {
+          id: item.userId,
+          displayName: item.name,
+          name: item.name,
+          avatar: item.avatar,
+          division: item.division || "",
+          region: item.region || "",
+          city: "",
+          district: "",
+          organization: ""
+        } as any;
+        return {
+          user: u,
+          totalPoints: item.totalPoints,
+          daimokuMinutes: item.daimokuMinutes,
+          exerciseCount: item.exerciseCount,
+          streakDays: item.streak
+        };
+      });
+    }
+
     return users.map((u) => {
       const userActivities = activities.filter((a) => a.userId === u.id);
 

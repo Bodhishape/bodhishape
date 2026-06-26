@@ -28,6 +28,7 @@ interface CommunitiesPanelProps {
   users: User[];
   activities: Activity[];
   firebaseAuth?: any;
+  onSelectCommunity?: (comm: any) => void;
 }
 
 interface ChatMessage {
@@ -42,9 +43,18 @@ interface ChatMessage {
   isPinned?: boolean;
 }
 
-export default function CommunitiesPanel({ currentUser, communities, onAddCommunity, users, activities, firebaseAuth }: CommunitiesPanelProps) {
+export default function CommunitiesPanel({ currentUser, communities, onAddCommunity, users, activities, firebaseAuth, onSelectCommunity }: CommunitiesPanelProps) {
   // Rich fallback seed list in case DB has old structure
   const [localCommunities, setLocalCommunities] = useState<any[]>([]);
+
+  // Selection of active challenge
+  const [selectedChallenge, setSelectedChallenge] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (onSelectCommunity) {
+      onSelectCommunity(selectedChallenge);
+    }
+  }, [selectedChallenge, onSelectCommunity]);
 
   // Track join status locally so the user can dynamically click join/leave
   const [joinedChallenges, setJoinedChallenges] = useState<Record<string, boolean>>({});
@@ -77,9 +87,6 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
 
   // Tabs inside active selected challenge space
   const [activeTab, setActiveTab] = useState<"feed" | "chat" | "ranking" | "dashboard" | "regras" | "subgroups">("chat");
-
-  // Selection of active challenge
-  const [selectedChallenge, setSelectedChallenge] = useState<any | null>(null);
 
   // Community ranking states
   const [communityRanking, setCommunityRanking] = useState<any[]>([]);

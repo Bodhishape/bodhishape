@@ -7,16 +7,40 @@ interface ConstancyHallProps {
   users: User[];
   activities: Activity[];
   onSelectUser: (user: User) => void;
+  communityId?: string;
 }
 
-export default function ConstancyHall({ users, activities, onSelectUser }: ConstancyHallProps) {
+export default function ConstancyHall({ users, activities, onSelectUser, communityId }: ConstancyHallProps) {
+  const [localMembers, setLocalMembers] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    if (communityId) {
+      fetch(`/api/constancy-hall?communityId=${communityId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) {
+            setLocalMembers(data.map((item: any) => item.userId));
+          } else {
+            setLocalMembers([]);
+          }
+        })
+        .catch(err => console.error(err));
+    } else {
+      setLocalMembers(null);
+    }
+  }, [communityId]);
+
+  const extendedUsers = localMembers 
+    ? users.filter(u => localMembers.includes(u.id))
+    : users;
+
   // Dynamically compile accomplishments based on real active users,
   // falling back onto classic Buddhist/Soka-Shape motivational quotes if no real users are active yet.
   const achievements = React.useMemo(() => {
     const list: string[] = [];
     
     // Scan real users for accomplishments
-    users.forEach(u => {
+    extendedUsers.forEach(u => {
       const displayName = u.displayName || u.name;
       if (u.streak && u.streak >= 3) {
         list.push(`🚀 O Bodhishaper ${displayName} alcançou uma constância abençoada de ${u.streak} dias! Suando o Karma!`);
@@ -40,7 +64,7 @@ export default function ConstancyHall({ users, activities, onSelectUser }: Const
     ];
 
     return list.length > 0 ? [...list, ...fallbackQuotes] : fallbackQuotes;
-  }, [users, activities]);
+  }, [extendedUsers, activities]);
 
   const [tickerIndex, setTickerIndex] = useState(0);
 
@@ -61,8 +85,6 @@ export default function ConstancyHall({ users, activities, onSelectUser }: Const
     { title: "🔥 15+ dias seguidos (Hábito Consolidado)", min: 15, bg: "from-emerald-900/20 to-green-500/10 border-emerald-500/30 text-emerald-300" },
     { title: "🔥 7+ dias seguidos (Primeira Grande Vitória)", min: 7, bg: "from-slate-900/40 to-slate-800/40 border-slate-750 text-slate-350" }
   ];
-
-  const extendedUsers: User[] = users;
 
   // Helper to find the maximum bracket a user fits into
   const getUserBracketIdx = (streak: number) => {
@@ -89,7 +111,7 @@ export default function ConstancyHall({ users, activities, onSelectUser }: Const
   // Calculate automatically generated weekly highlights
   const calcWeeklyHighlights = () => {
     // 1. Largest growth / daimoku this week
-    const daimokuLeaders = users.map(u => {
+    const daimokuLeaders = extendedUsers.map(u => {
       const mins = activities
         .filter(a => a.userId === u.id && a.type === "daimoku")
         .reduce((sum, a) => sum + (a.minutes || 0), 0);
@@ -97,7 +119,7 @@ export default function ConstancyHall({ users, activities, onSelectUser }: Const
     }).filter(x => x.value > 0).sort((a,b) => b.value - a.value);
 
     // 2. Largest exercise frequency
-    const exerciseLeaders = users.map(u => {
+    const exerciseLeaders = extendedUsers.map(u => {
       const count = activities
         .filter(a => a.userId === u.id && a.type === "exercise")
         .length;
@@ -138,7 +160,7 @@ export default function ConstancyHall({ users, activities, onSelectUser }: Const
 
     // Union activities
     const userTotalActivities = (user: User) => activities.filter(a => a.userId === user.id).length;
-    const unionLeaders = users.map(u => ({ user: u, value: userTotalActivities(u) })).filter(x => x.value >= 10).sort((a,b) => b.value - a.value);
+    const unionLeaders = extendedUsers.map(u => ({ user: u, value: userTotalActivities(u) })).filter(x => x.value >= 10).sort((a,b) => b.value - a.value);
 
     const activitiesHighlight = unionLeaders[0] ? {
       user: unionLeaders[0].user,
@@ -148,7 +170,7 @@ export default function ConstancyHall({ users, activities, onSelectUser }: Const
     } : null;
 
     // Goals completed
-    const goalsLeaders = users.map(u => {
+    const goalsLeaders = extendedUsers.map(u => {
       return { user: u, value: u.daimokuBalance || 0 };
     }).filter(x => x.value >= 500).sort((a,b) => b.value - a.value);
 

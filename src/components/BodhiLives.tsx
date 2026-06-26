@@ -31,7 +31,12 @@ interface FloatingHeart {
   size: number;
 }
 
-export default function BodhiLives({ currentUser }: { currentUser: User | null }) {
+interface BodhiLivesProps {
+  currentUser: User | null;
+  communityId?: string;
+}
+
+export default function BodhiLives({ currentUser, communityId }: BodhiLivesProps) {
   const [activeLive, setActiveLive] = useState<LiveEvent | null>(null);
   const [isPlaying, setIsPlaying] = useState(true);
   const [viewers, setViewers] = useState(1);
@@ -52,7 +57,8 @@ export default function BodhiLives({ currentUser }: { currentUser: User | null }
   // Fetch current active live
   const fetchActiveLive = async () => {
     try {
-      const res = await fetch("/api/lives");
+      const url = communityId ? `/api/lives?communityId=${communityId}` : "/api/lives";
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         if (data && data.length > 0) {
@@ -107,7 +113,7 @@ export default function BodhiLives({ currentUser }: { currentUser: User | null }
       clearInterval(liveInterval);
       clearInterval(viewersInterval);
     };
-  }, []);
+  }, [communityId]);
 
   // Poll comments for active live
   useEffect(() => {
@@ -137,7 +143,8 @@ export default function BodhiLives({ currentUser }: { currentUser: User | null }
           userId: currentUser.id,
           title: newLiveTitle,
           description: newLiveDesc,
-          videoUrl: newLiveUrl
+          videoUrl: newLiveUrl,
+          communityId
         })
       });
 

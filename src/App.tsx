@@ -68,6 +68,7 @@ export default function App() {
 
   // Navigation
   const [activeTab, setActiveTab] = useState<string>("feed");
+  const [activeCommunity, setActiveCommunity] = useState<any>(null);
 
   // Onboarding & Help Guide visibility
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -3373,6 +3374,7 @@ export default function App() {
                     onSelectUser={(u) => setSelectedPublicUser(u)}
                     onPostCreated={fetchAllData}
                     firebaseAuth={firebaseAuth}
+                    communityId={activeCommunity?.id}
                   />
                 </div>
               )}
@@ -3403,6 +3405,7 @@ export default function App() {
                   users={users} 
                   activities={activities} 
                   onSelectUser={(u) => setSelectedPublicUser(u)} 
+                  communityId={activeCommunity?.id}
                 />
               )}
 
@@ -3416,6 +3419,7 @@ export default function App() {
                   allBs={bsList}
                   onUpdateKofuStatus={handleUpdateKofuStatus}
                   onUpdateBsStatus={handleUpdateBsStatus}
+                  communityId={activeCommunity?.id}
                 />
               )}
 
@@ -3435,6 +3439,7 @@ export default function App() {
                   currentUser={currentUser}
                   onSelectUser={(u) => setSelectedPublicUser(u)}
                   firebaseAuth={firebaseAuth}
+                  communityId={activeCommunity?.id}
                 />
               )}
 
@@ -3442,12 +3447,14 @@ export default function App() {
                 <AvisosComunidade
                   currentUser={currentUser}
                   firebaseAuth={firebaseAuth}
+                  communityId={activeCommunity?.id}
                 />
               )}
 
               {activeTab === "lives" && (
                 <BodhiLives
                   currentUser={currentUser}
+                  communityId={activeCommunity?.id}
                 />
               )}
 
@@ -3456,6 +3463,7 @@ export default function App() {
                   users={users}
                   activities={activities}
                   onSelectUser={(u) => setSelectedPublicUser(u)}
+                  communityId={activeCommunity?.id}
                 />
               )}
 
@@ -3467,6 +3475,7 @@ export default function App() {
                   users={users}
                   activities={activities}
                   firebaseAuth={firebaseAuth}
+                  onSelectCommunity={(comm) => setActiveCommunity(comm)}
                 />
               )}
 

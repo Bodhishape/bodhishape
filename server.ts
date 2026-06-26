@@ -2049,6 +2049,18 @@ app.post("/api/activities/log", async (req, res) => {
     postImg = zenPics[Math.floor(Math.random() * zenPics.length)];
   }
 
+  // Após calcular pontos normalmente, verificar comunidades
+  const userCommunities = (dbData.communities || []).filter((c: any) => 
+    c.participants?.includes(userId)
+  );
+  userCommunities.forEach((comm: any) => {
+    const rules = comm.enabledActivities || [];
+    // Aplicar regras específicas da comunidade se existirem
+    // comm.gongyoMorningPoints, comm.gongyoEveningPoints, etc.
+  });
+
+  const { communityId, communityIds } = req.body;
+
   // Create Feed Post
   const newPostId = "post-" + Math.random().toString(36).substr(2, 9);
   const newPost = {
@@ -2062,7 +2074,8 @@ app.post("/api/activities/log", async (req, res) => {
     image: postImg,
     timestamp: logTimestamp,
     reactions: { "❤️": [], "🔥": [], "💪": [], "👏": [], "🌟": [] },
-    comments: [] as any[]
+    comments: [] as any[],
+    communityIds: communityIds || (communityId ? [communityId] : [])
   };
 
   dbData.posts.unshift(newPost);
@@ -2110,10 +2123,22 @@ app.post("/api/activities/log-combined", async (req, res) => {
     sourceDevice,
     sourceApp,
     gpxUrl,
-    tcxUrl
+    tcxUrl,
+    communityId,
+    communityIds
   } = req.body;
 
   const dbData = readDB();
+  // Após calcular pontos normalmente, verificar comunidades
+  const userCommunities = (dbData.communities || []).filter((c: any) => 
+    c.participants?.includes(userId)
+  );
+  userCommunities.forEach((comm: any) => {
+    const rules = comm.enabledActivities || [];
+    // Aplicar regras específicas da comunidade se existirem
+    // comm.gongyoMorningPoints, comm.gongyoEveningPoints, etc.
+  });
+
   const user = dbData.users.find((u: any) => u.id === userId);
   if (!user) {
     return res.status(404).json({ error: "Usuário não cadastrado." });
@@ -2317,7 +2342,8 @@ app.post("/api/activities/log-combined", async (req, res) => {
       loggedActivities: lines,
       pointsEarned: pointsEarned,
       isPresenceOnly: true,
-      streak: user.streak || 1
+      streak: user.streak || 1,
+      communityIds: communityIds || (communityId ? [communityId] : [])
     };
 
     dbData.posts.unshift(finalPost);
@@ -2351,7 +2377,8 @@ app.post("/api/activities/log-combined", async (req, res) => {
       loggedActivities: lines,
       pointsEarned: pointsEarned,
       isPresenceOnly: false,
-      streak: user.streak || 1
+      streak: user.streak || 1,
+      communityIds: communityIds || (communityId ? [communityId] : [])
     };
 
     // AI feedback comment with multi-category context support (top/climbing/gripe/absence/community)
@@ -2480,7 +2507,15 @@ app.post("/api/activities/log-combined", async (req, res) => {
 // Get list of victory stories
 app.get("/api/stories", (req, res) => {
   const dbData = readDB();
-  const stories = dbData.stories || [];
+  const communityId = req.query.communityId as string;
+  let stories = dbData.stories || [];
+  if (communityId) {
+    const comm = dbData.communities.find((c: any) => c.id === communityId);
+    if (comm) {
+      const memberIds = comm.participants || [];
+      stories = stories.filter((s: any) => memberIds.includes(s.userId));
+    }
+  }
   res.json(stories);
 });
 
@@ -2917,7 +2952,19 @@ app.post("/api/posts/:postId/comment", (req, res) => {
 // Fetch feed posts
 app.get("/api/posts", (req, res) => {
   const dbData = readDB();
-  res.json(dbData.posts);
+  const communityId = req.query.communityId as string;
+  let result = dbData.posts || [];
+  if (communityId) {
+    const comm = dbData.communities.find((c: any) => c.id === communityId);
+    if (comm) {
+      const memberIds = comm.participants || [];
+      result = result.filter((p: any) => 
+        memberIds.includes(p.userId) || 
+        (p.communityIds && p.communityIds.includes(communityId))
+      );
+    }
+  }
+  res.json(result);
 });
 
 // Goals endpoints
@@ -3181,11 +3228,82 @@ app.get("/api/communities/:id/feed", (req: any, res: any) => {
   res.json(memberPosts);
 });
 
+// GET /api/leaderboard - general or community filtered
+app.get("/api/leaderboard", (req: any, res: any) => {
+  const dbData = readDB();
+  const communityId = req.query.communityId as string;
+  let userIds: string[] = [];
+  if (communityId) {
+    const comm = dbData.communities.find((c: any) => c.id === communityId);
+    userIds = comm?.participants || [];
+  } else {
+    userIds = dbData.users.map((u: any) => u.id);
+  }
+
+  const leaderboard = userIds.map((uid: string) => {
+    const user = dbData.users.find((u: any) => u.id === uid);
+    const acts = (dbData.activities || []).filter((a: any) => a.userId === uid);
+    const totalPoints = acts.reduce((s: number, a: any) => s + (a.points || 0), 0);
+    const daimokuMinutes = acts.filter((a: any) => a.type === "daimoku").reduce((s: number, a: any) => s + (a.minutes || 0), 0);
+    const exerciseCount = acts.filter((a: any) => a.type === "exercise").length;
+
+    return {
+      userId: uid,
+      name: user?.displayName || user?.name || "Desconhecido",
+      avatar: user?.avatar || "",
+      division: user?.division || "",
+      region: user?.region || "",
+      totalPoints,
+      streak: user?.streak || 0,
+      daimokuMinutes,
+      exerciseCount
+    };
+  });
+
+  leaderboard.sort((a: any, b: any) => b.totalPoints - a.totalPoints);
+  res.json(leaderboard);
+});
+
+// GET /api/constancy-hall - general or community filtered
+app.get("/api/constancy-hall", (req: any, res: any) => {
+  const dbData = readDB();
+  const communityId = req.query.communityId as string;
+  let userIds: string[] = [];
+  if (communityId) {
+    const comm = dbData.communities.find((c: any) => c.id === communityId);
+    userIds = comm?.participants || [];
+  } else {
+    userIds = dbData.users.map((u: any) => u.id);
+  }
+
+  const hall = userIds.map((uid: string) => {
+    const user = dbData.users.find((u: any) => u.id === uid);
+    const acts = (dbData.activities || []).filter((a: any) => a.userId === uid);
+    const uniqueDays = new Set(acts.map((a: any) => a.timestamp?.split("T")[0]).filter(Boolean));
+
+    return {
+      userId: uid,
+      name: user?.displayName || user?.name || "Desconhecido",
+      avatar: user?.avatar || "",
+      streak: user?.streak || 0,
+      totalDays: uniqueDays.size,
+      lastActive: user?.lastActive || ""
+    };
+  });
+
+  hall.sort((a: any, b: any) => b.totalDays - a.totalDays);
+  res.json(hall);
+});
+
 // Community Notices / Mural de Avisos endpoints
 app.get("/api/notices", (req: any, res: any) => {
   const dbData = readDB();
   if (!dbData.notices) {
     dbData.notices = [];
+  }
+  const communityId = req.query.communityId as string;
+  if (communityId) {
+    return res.json(dbData.notices.filter((n: any) => n.communityId === communityId));
   }
   res.json(dbData.notices);
 });
@@ -3208,7 +3326,7 @@ async function extractAndVerifyLeader(req: any) {
 }
 
 app.post("/api/notices", async (req: any, res: any) => {
-  const { type, tag, title, description, deadline, target, maxProgress, color } = req.body;
+  const { type, tag, title, description, deadline, target, maxProgress, color, communityId } = req.body;
   if (!title || !description) {
     return res.status(400).json({ error: "Título e descrição são obrigatórios." });
   }
@@ -3235,7 +3353,8 @@ app.post("/api/notices", async (req: any, res: any) => {
     maxProgress: maxProgress ? Number(maxProgress) : null,
     color: color || "from-slate-900/40 to-slate-950/40 border-slate-800 text-slate-350",
     joinedCount: 0,
-    participants: []
+    participants: [],
+    communityId: communityId || undefined
   };
 
   dbData.notices.push(newNotice);
@@ -3244,7 +3363,7 @@ app.post("/api/notices", async (req: any, res: any) => {
 });
 
 app.post("/api/notices/update", async (req: any, res: any) => {
-  const { id, type, tag, title, description, deadline, target, maxProgress, currentProgress, color } = req.body;
+  const { id, type, tag, title, description, deadline, target, maxProgress, currentProgress, color, communityId } = req.body;
   if (!id) {
     return res.status(400).json({ error: "ID do aviso é necessário." });
   }
@@ -3273,7 +3392,8 @@ app.post("/api/notices/update", async (req: any, res: any) => {
     target: target !== undefined ? target : existing.target,
     currentProgress: currentProgress !== undefined ? Number(currentProgress) : existing.currentProgress,
     maxProgress: maxProgress !== undefined ? (maxProgress ? Number(maxProgress) : null) : existing.maxProgress,
-    color: color || existing.color
+    color: color || existing.color,
+    communityId: communityId !== undefined ? communityId : existing.communityId
   };
 
   dbData.notices[index] = updatedNotice;
@@ -4166,11 +4286,16 @@ app.get("/api/feedbacks", async (req, res) => {
 // --- LIVES ENDPOINTS ---
 app.get("/api/lives", async (req, res) => {
   const dbData = readDB();
-  res.json(dbData.lives || []);
+  const communityId = req.query.communityId as string;
+  let lives = dbData.lives || [];
+  if (communityId) {
+    lives = lives.filter((l: any) => l.communityId === communityId);
+  }
+  res.json(lives);
 });
 
 app.post("/api/lives", async (req, res) => {
-  const { userId, title, description, videoUrl } = req.body;
+  const { userId, title, description, videoUrl, communityId } = req.body;
   const dbData = readDB();
   const user = dbData.users.find((u: any) => u.id === userId);
 
@@ -4196,7 +4321,8 @@ app.post("/api/lives", async (req, res) => {
     videoUrl: parsedVideoUrl,
     createdAt: new Date().toISOString(),
     createdBy: userId,
-    likes: 0
+    likes: 0,
+    communityId: communityId || undefined
   };
 
   dbData.lives = [newLive]; // Only allow one active live at a time

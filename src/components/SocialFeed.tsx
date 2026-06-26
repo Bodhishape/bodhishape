@@ -20,6 +20,7 @@ interface SocialFeedProps {
   onSelectUser?: (user: User) => void;
   onPostCreated?: () => void;
   firebaseAuth?: any;
+  communityId?: string;
 }
 
 const predefinedImages = [
@@ -88,9 +89,23 @@ export default function SocialFeed({
   onSubmitCombined,
   onSelectUser,
   onPostCreated,
-  firebaseAuth
+  firebaseAuth,
+  communityId
 }: SocialFeedProps) {
   
+  const [localPosts, setLocalPosts] = useState<Post[]>(posts);
+
+  useEffect(() => {
+    if (communityId) {
+      fetch(`/api/posts?communityId=${communityId}`)
+        .then(res => res.json())
+        .then(data => setLocalPosts(Array.isArray(data) ? data : []))
+        .catch(err => console.error(err));
+    } else {
+      setLocalPosts(posts);
+    }
+  }, [communityId, posts]);
+
   // Custom states
   const [contentMsg, setContentMsg] = useState("");
   const [postImage, setPostImage] = useState("");
@@ -462,7 +477,9 @@ export default function SocialFeed({
       exerciseDistance,
       exerciseCalories,
       exerciseSteps,
-      exerciseNotes
+      exerciseNotes,
+      communityId,
+      communityIds: communityId ? [communityId] : []
     };
 
     try {
@@ -503,6 +520,21 @@ export default function SocialFeed({
   return (
     <div className="space-y-6" id="social-feed-container">
       
+      {communityId && (
+        <div className="bg-slate-900/60 backdrop-blur-md border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-lg">
+          <div className="flex items-center gap-2">
+            <span className="text-sm">📍</span>
+            <span className="text-xs text-slate-350 font-semibold font-mono">Modo Filtrado:</span>
+            <span className="text-sm text-soka-orange font-bold">
+              {communities?.find(c => c.id === communityId)?.name || "Comunidade Selecionada"}
+            </span>
+          </div>
+          <span className="bg-soka-orange/10 border border-soka-orange/30 text-soka-orange text-[10px] font-bold py-0.5 px-2 rounded-full uppercase tracking-wider animate-pulse">
+            Ativo
+          </span>
+        </div>
+      )}
+
       {/* 📸 UNIFIED GYMRATS CREATION FORM PANEL */}
       {currentUser && (
         <form 
@@ -1138,8 +1170,8 @@ export default function SocialFeed({
 
       {/* Social post feed items list */}
       <div className="space-y-4">
-        {posts.length > 0 ? (
-          posts.map((post) => {
+        {localPosts.length > 0 ? (
+          localPosts.map((post) => {
             const authorUser = allUsers?.find(u => u.id === post.userId);
             const authorName = authorUser ? (authorUser.displayName || authorUser.name) : post.userName;
             const authorAvatar = authorUser ? authorUser.avatar : post.userAvatar;
@@ -1410,8 +1442,9 @@ export default function SocialFeed({
                 {/* Reaction summaries counts */}
                 <div className="px-4 py-2 border-b border-slate-850 flex flex-wrap gap-2 text-xs">
                   {Object.entries(post.reactions || {}).map(([key, usersList]) => {
-                    if (!usersList || usersList.length === 0) return null;
-                    const hasUserReacted = currentUser && usersList.includes(currentUser.id);
+                    const usersListArray = (usersList || []) as string[];
+                    if (usersListArray.length === 0) return null;
+                    const hasUserReacted = currentUser && usersListArray.includes(currentUser.id);
                     return (
                       <span
                         key={key}
@@ -1423,7 +1456,7 @@ export default function SocialFeed({
                         }`}
                       >
                         <span>{key}</span>
-                        <span className="text-[10px]">{usersList.length}</span>
+                        <span className="text-[10px]">{usersListArray.length}</span>
                       </span>
                     );
                   })}

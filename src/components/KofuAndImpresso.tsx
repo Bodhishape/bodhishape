@@ -12,6 +12,7 @@ interface KofuAndImpressoProps {
   allBs: BsRecord[];
   onUpdateKofuStatus: (status: "realizado" | "em_andamento" | "nao_realizado") => void;
   onUpdateBsStatus: (status: "ativo" | "pendente" | "nao_assinante", renewalDate?: string) => void;
+  communityId?: string;
 }
 
 export default function KofuAndImpresso({
@@ -23,6 +24,7 @@ export default function KofuAndImpresso({
   allBs,
   onUpdateKofuStatus,
   onUpdateBsStatus,
+  communityId,
 }: KofuAndImpressoProps) {
   const [redirectModal, setRedirectModal] = React.useState<{
     title: string;
@@ -30,17 +32,48 @@ export default function KofuAndImpresso({
     url: string;
     siteName: string;
   } | null>(null);
+
+  const [localMembers, setLocalMembers] = React.useState<string[] | null>(null);
+
+  React.useEffect(() => {
+    if (communityId) {
+      fetch(`/api/constancy-hall?communityId=${communityId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) {
+            setLocalMembers(data.map((item: any) => item.userId));
+          } else {
+            setLocalMembers([]);
+          }
+        })
+        .catch(err => console.error(err));
+    } else {
+      setLocalMembers(null);
+    }
+  }, [communityId]);
+
+  const filteredUsers = localMembers 
+    ? users.filter(u => localMembers.includes(u.id))
+    : users;
+
+  const filteredBs = localMembers
+    ? allBs.filter(b => localMembers.includes(b.userId))
+    : allBs;
+
+  const filteredKofu = localMembers
+    ? allKofu.filter(k => localMembers.includes(k.userId))
+    : allKofu;
   
   // Calculate BS statistics in community
-  const totalUsers = users.length;
-  const activeSubscribersCount = allBs.filter((b) => b.status === "ativo").length;
-  const pendingCount = allBs.filter((b) => b.status === "pendente").length;
+  const totalUsers = filteredUsers.length;
+  const activeSubscribersCount = filteredBs.filter((b) => b.status === "ativo").length;
+  const pendingCount = filteredBs.filter((b) => b.status === "pendente").length;
   const activePercentage = totalUsers > 0 ? Math.round((activeSubscribersCount / totalUsers) * 100) : 0;
 
   // Calculate Kofu statistics in community
-  const totalKofusTracked = allKofu.length;
-  const kofuRealizado = allKofu.filter((k) => k.status === "realizado").length;
-  const kofuAndamento = allKofu.filter((k) => k.status === "em_andamento").length;
+  const totalKofusTracked = filteredKofu.length;
+  const kofuRealizado = filteredKofu.filter((k) => k.status === "realizado").length;
+  const kofuAndamento = filteredKofu.filter((k) => k.status === "em_andamento").length;
 
   const handleUpdateRenewalSimulation = () => {
     // Simulate updating renewal date
