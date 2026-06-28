@@ -77,6 +77,9 @@ export default function App() {
   // Onboarding & Help Guide visibility
   const [showOnboarding, setShowOnboarding] = useState(false);
 
+  // Web Bluetooth support detection
+  const isBluetoothSupported = typeof navigator !== "undefined" && "bluetooth" in navigator;
+
   // GLOBAL PWA DOWNLOADING / INSTALLATION ENGINE (Solves disappearing install/download feature)
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallBtn, setShowInstallBtn] = useState(false);
@@ -1180,7 +1183,7 @@ export default function App() {
 
   const connectHeartRateMonitor = async () => {
     if (!(navigator as any).bluetooth) {
-      setLoggerErrorMsg("Web Bluetooth não suportado neste navegador/iframe.");
+      setLoggerErrorMsg("Este recurso não está disponível no seu navegador atual. A Apple não oferece suporte a conexões Bluetooth via navegador no Safari/iPhone. Para usar o monitor cardíaco, acesse o BodhiShape em um navegador Chrome no Android.");
       return;
     }
     try {
@@ -3941,39 +3944,57 @@ export default function App() {
                   {/* Device List Grid */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {[
-                      { id: "strava", name: "Strava", icon: "🧡", desc: "Sincronize GPS, ciclos e corridas" },
-                      { id: "garmin", name: "Garmin Connect", icon: "🛞", desc: "Importe métricas avançadas de relógios Garmin" },
-                      { id: "fitbit", name: "Fitbit Pay", icon: "💎", desc: "Acompanhe batimentos cardíacos e passos diários" },
-                      { id: "samsung", name: "Samsung Health", icon: "🌌", desc: "Conexão oficial para wearables Galaxy Watch" },
-                      { id: "healthconnect", name: "Android Health Connect", icon: "🔗", desc: "Integração central do Android com múltiplos apps" },
-                      { id: "zepp", name: "Zepp Life (Amazfit)", icon: "👟", desc: "Balanças de peso corporais e pulseiras inteligentes" },
-                      { id: "mi", name: "Mi Fitness (Xiaomi)", icon: "📈", desc: "Sincronize passos de relógios Redmi e Mi Bands" },
+                      { id: "strava", name: "Strava", icon: "🧡", desc: "Sincronize GPS, ciclos e corridas", isComingSoon: false },
+                      { id: "garmin", name: "Garmin Connect", icon: "🛞", desc: "Importe métricas avançadas de relógios Garmin", isComingSoon: true },
+                      { id: "fitbit", name: "Fitbit Pay", icon: "💎", desc: "Acompanhe batimentos cardíacos e passos diários", isComingSoon: true },
+                      { id: "samsung", name: "Samsung Health", icon: "🌌", desc: "Conexão oficial para wearables Galaxy Watch", isComingSoon: true },
+                      { id: "healthconnect", name: "Android Health Connect", icon: "🔗", desc: "Integração central do Android com múltiplos apps", isComingSoon: true },
+                      { id: "zepp", name: "Zepp Life (Amazfit)", icon: "👟", desc: "Balanças de peso corporais e pulseiras inteligentes", isComingSoon: true },
+                      { id: "mi", name: "Mi Fitness (Xiaomi)", icon: "📈", desc: "Sincronize passos de relógios Redmi e Mi Bands", isComingSoon: true },
                     ].map((device) => {
-                      const isConnected = connectedDevices.includes(device.id);
+                      const isComingSoon = device.isComingSoon;
+                      const isConnected = !isComingSoon && connectedDevices.includes(device.id);
                       return (
                         <div
                           key={device.id}
                           className={`p-4 rounded-xl border transition-all duration-300 flex flex-col justify-between h-40 ${
-                            isConnected
-                              ? "bg-[#142323] border-teal-800/80 shadow shadow-teal-900/30"
-                              : "bg-slate-900/40 hover:bg-slate-900/60 border-slate-800/80 hover:border-slate-800"
+                            isComingSoon
+                              ? "bg-slate-950/20 border-slate-900/40 opacity-60 text-slate-500"
+                              : isConnected
+                                ? "bg-[#142323] border-teal-800/80 shadow shadow-teal-900/30"
+                                : "bg-slate-900/40 hover:bg-slate-900/60 border-slate-800/80 hover:border-slate-800"
                           }`}
                         >
                           <div>
                             <div className="flex items-center justify-between mb-2">
                               <span className="text-2xl">{device.icon}</span>
-                              <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${
-                                isConnected ? "bg-teal-500/20 text-teal-300" : "bg-slate-950/60 text-slate-500 border border-slate-800"
-                              }`}>
-                                {isConnected ? "conectado ✅" : "desconectado"}
-                              </span>
+                              {isComingSoon ? (
+                                <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono tracking-wider">
+                                  Em breve ⏳
+                                </span>
+                              ) : (
+                                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${
+                                  isConnected ? "bg-teal-500/20 text-teal-300" : "bg-slate-950/60 text-slate-500 border border-slate-800"
+                                }`}>
+                                  {isConnected ? "conectado ✅" : "desconectado"}
+                                </span>
+                              )}
                             </div>
-                            <h3 className="text-xs font-black text-slate-100 font-heading">{device.name}</h3>
+                            <h3 className={`text-xs font-black font-heading ${isComingSoon ? "text-slate-400" : "text-slate-100"}`}>{device.name}</h3>
                             <p className="text-[10px] text-slate-400 mt-1 line-clamp-2 leading-snug">{device.desc}</p>
                           </div>
 
                           <div className="pt-2 border-t border-slate-800/30 mt-2 space-y-1.5">
-                            {isConnected ? (
+                            {isComingSoon ? (
+                              <button
+                                onClick={() => {
+                                  setLoggerErrorMsg("Em breve! Esta integração ainda não está disponível. Atualmente somente Strava está conectável.");
+                                }}
+                                className="w-full text-center text-[10px] font-extrabold text-slate-500 bg-slate-950/45 p-1.5 rounded-lg border border-slate-900/40 cursor-not-allowed opacity-50 transition"
+                              >
+                                Conectar dispositivo ⚡ (Bloqueado)
+                              </button>
+                            ) : isConnected ? (
                               <>
                                 {device.id === "strava" ? (
                                   <>
@@ -4154,12 +4175,21 @@ export default function App() {
                         <p className="text-[11px] text-slate-350 leading-relaxed font-sans">
                           Conecte cinta peitoral, smartwatch ou qualquer monitor BLE compatível. Acompanhe BPM ao vivo em treinos e Daimoku.
                         </p>
+
+                        {!isBluetoothSupported && (
+                          <div className="p-3 bg-amber-950/20 border border-amber-500/20 rounded-xl space-y-1 text-left">
+                            <span className="text-[10px] font-bold text-amber-400 block font-heading uppercase tracking-wide">⚠️ Incompatibilidade de Navegador</span>
+                            <p className="text-[10px] text-amber-300/90 leading-snug font-sans">
+                              A Apple não oferece suporte a conexões Bluetooth via navegador no Safari/iPhone. Acesse o BodhiShape usando o Chrome no Android ou Desktop para parear dispositivos BLE.
+                            </p>
+                          </div>
+                        )}
                         
                         <div className="bg-slate-950 p-3 rounded-xl border border-slate-850 space-y-2 text-left">
                           <div className="flex items-center justify-between">
                             <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">Status:</span>
-                            <span className={`text-[9px] font-mono font-black uppercase ${isHrConnected ? "text-emerald-400" : "text-rose-450"}`}>
-                              {isHrConnected ? "CONECTADO" : "OFFLINE"}
+                            <span className={`text-[9px] font-mono font-black uppercase ${!isBluetoothSupported ? "text-amber-500/70" : isHrConnected ? "text-emerald-400" : "text-rose-450"}`}>
+                              {!isBluetoothSupported ? "NÃO SUPORTADO" : isHrConnected ? "CONECTADO" : "OFFLINE"}
                             </span>
                           </div>
                           <div className="flex items-center justify-between">
@@ -4182,7 +4212,16 @@ export default function App() {
                       </div>
 
                       <div className="flex gap-2">
-                        {!isHrConnected ? (
+                        {!isBluetoothSupported ? (
+                          <button
+                            onClick={() => {
+                              setLoggerErrorMsg("Este recurso não está disponível no seu navegador atual. A Apple não oferece suporte a conexões Bluetooth via navegador no Safari/iPhone. Para usar o monitor cardíaco, acesse o BodhiShape em um navegador Chrome no Android.");
+                            }}
+                            className="flex-1 bg-slate-950/45 text-slate-500 font-bold px-4 py-2.5 rounded-xl text-xs transition border border-slate-900/40 cursor-not-allowed opacity-50 text-center"
+                          >
+                            🛜 Parear Monitor Cardíaco (Bloqueado)
+                          </button>
+                        ) : !isHrConnected ? (
                           <button onClick={connectHeartRateMonitor}
                             className="flex-1 bg-[#1b253d] hover:bg-blue-800 text-blue-300 font-bold px-4 py-2.5 rounded-xl text-xs transition border border-blue-500/20 cursor-pointer">
                             🛜 Parear Monitor Cardíaco
