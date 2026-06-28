@@ -5136,6 +5136,102 @@ app.get("/api/daimoku/active", async (req, res) => {
   }
 });
 
+// --- HIERARQUIA BSGI ENDPOINTS ---
+app.get("/api/hierarchy/tree", async (req, res) => {
+  const dbData = readDB();
+  const users = dbData.users || [];
+  const activities = dbData.activities || [];
+  const kofuList = dbData.kofu || [];
+  const bsList = dbData.bs_subscription || [];
+
+  const regionMap: Record<string, any> = {};
+
+  users.forEach((u: any) => {
+    const region = u.region || "Região Indefinida";
+    const district = u.district || "Distrito Indefinido";
+    const subDistrict = u.subDistrict || "Subdistrito Indefinido";
+    const block = u.block || "";
+    const group = u.horizontalGroup || "";
+
+    if (!regionMap[region]) regionMap[region] = { name: region, districts: {} };
+    if (!regionMap[region].districts[district]) regionMap[region].districts[district] = { name: district, subDistricts: {} };
+    if (!regionMap[region].districts[district].subDistricts[subDistrict]) regionMap[region].districts[district].subDistricts[subDistrict] = { name: subDistrict, blocks: {} };
+    if (!regionMap[region].districts[district].subDistricts[subDistrict].blocks[block]) regionMap[region].districts[district].subDistricts[subDistrict].blocks[block] = { name: block || "Sem bloco", members: [] };
+
+    const userActs = activities.filter((a: any) => a.userId === u.id);
+    const totalDaimoku = userActs.filter((a: any) => a.type === "daimoku").reduce((s: number, a: any) => s + (a.minutes || 0), 0);
+    const totalExercise = userActs.filter((a: any) => a.type === "exercise").reduce((s: number, a: any) => s + (a.minutes || 0), 0);
+
+    regionMap[region].districts[district].subDistricts[subDistrict].blocks[block].members.push({
+      id: u.id,
+      name: u.displayName || u.name,
+      avatar: u.avatar,
+      division: u.division,
+      city: u.city,
+      streak: u.streak || 0,
+      totalDaimoku,
+      totalExercise,
+      kofu: kofuList.find((k: any) => k.userId === u.id)?.status || "nao_realizado",
+      bs: bsList.find((b: any) => b.userId === u.id)?.status || "nao_assinante",
+      lastActive: u.lastActive || ""
+    });
+  });
+
+  const tree = Object.values(regionMap).map((region: any) => {
+    const districts = Object.values(region.districts).map((dist: any) => {
+      const subDistricts = Object.values(dist.subDistricts).map((sub: any) => {
+        const blocks = Object.values(sub.blocks).map((block: any) => ({
+          name: block.name,
+          memberCount: block.members.length,
+          members: block.members
+        }));
+        const allMembers = blocks.flatMap((b: any) => b.members);
+        return {
+          name: sub.name,
+          memberCount: allMembers.length,
+          totalDaimoku: allMembers.reduce((s: number, m: any) => s + m.totalDaimoku, 0),
+          totalExercise: allMembers.reduce((s: number, m: any) => s + m.totalExercise, 0),
+          bsCount: allMembers.filter((m: any) => m.bs === "ativo").length,
+          kofuCount: allMembers.filter((m: any) => m.kofu === "realizado").length,
+          avgStreak: allMembers.length > 0 ? Math.round(allMembers.reduce((s: number, m: any) => s + m.streak, 0) / allMembers.length) : 0,
+          blocks
+        };
+      });
+      const allMembers = subDistricts.flatMap((s: any) => s.blocks.flatMap((b: any) => b.members));
+      return {
+        name: dist.name,
+        memberCount: allMembers.length,
+        totalDaimoku: allMembers.reduce((s: number, m: any) => s + m.totalDaimoku, 0),
+        totalExercise: allMembers.reduce((s: number, m: any) => s + m.totalExercise, 0),
+        bsCount: allMembers.filter((m: any) => m.bs === "ativo").length,
+        kofuCount: allMembers.filter((m: any) => m.kofu === "realizado").length,
+        avgStreak: allMembers.length > 0 ? Math.round(allMembers.reduce((s: number, m: any) => s + m.streak, 0) / allMembers.length) : 0,
+        subDistricts
+      };
+    });
+    const allMembers = districts.flatMap((d: any) => d.subDistricts.flatMap((s: any) => s.blocks.flatMap((b: any) => b.members)));
+    return {
+      name: region.name,
+      memberCount: allMembers.length,
+      totalDaimoku: allMembers.reduce((s: number, m: any) => s + m.totalDaimoku, 0),
+      totalExercise: allMembers.reduce((s: number, m: any) => s + m.totalExercise, 0),
+      bsCount: allMembers.filter((m: any) => m.bs === "ativo").length,
+      kofuCount: allMembers.filter((m: any) => m.kofu === "realizado").length,
+      avgStreak: allMembers.length > 0 ? Math.round(allMembers.reduce((s: number, m: any) => s + m.streak, 0) / allMembers.length) : 0,
+      districts
+    };
+  });
+
+  const allUsers = users;
+  const totalMembers = allUsers.length;
+  const totalDaimoku = activities.filter((a: any) => a.type === "daimoku").reduce((s: number, a: any) => s + (a.minutes || 0), 0);
+  const totalExercise = activities.filter((a: any) => a.type === "exercise").length;
+  const totalBs = bsList.filter((b: any) => b.status === "ativo").length;
+  const totalKofu = kofuList.filter((k: any) => k.status === "realizado").length;
+
+  res.json({ tree, summary: { totalMembers, totalDaimoku, totalExercise, totalBs, totalKofu } });
+});
+
 // --- FEEDBACKS ENDPOINTS ---
 app.post("/api/feedbacks", async (req, res) => {
   const { userId, message, type } = req.body;

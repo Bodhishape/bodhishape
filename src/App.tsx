@@ -32,7 +32,8 @@ import {
   LogOut,
   Smartphone,
   Bell,
-  Calendar
+  Calendar,
+  Dumbbell
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -49,6 +50,7 @@ import MissaoNordesteMap from "./components/MissaoNordesteMap";
 import DaimokuBubbleChart from "./components/DaimokuBubbleChart";
 import PrivateEvolution from "./components/PrivateEvolution";
 import MyDevelopment from "./components/MyDevelopment";
+import HierarquiaBSGI from "./components/HierarquiaBSGI";
 import AiAssistant from "./components/AiAssistant";
 import ConstancyHall from "./components/ConstancyHall";
 import MuralVitorias from "./components/MuralVitorias";
@@ -3102,6 +3104,7 @@ export default function App() {
                         { id: "lives", icon: Video, label: " Bodhi TV Lives" },
                         { id: "ranking", icon: Trophy, label: " Classificações" },
                         { id: "constantes", icon: Flame, label: " Hall da Constância" },
+                        { id: "hierarquia", icon: ShieldCheck, label: " Hierarquia BSGI" },
                         { id: "communities", icon: Users, label: " Minha Comunidade" },
                         { id: "kofu-bs", icon: BookOpen, label: " Kofu & Impresso" },
                         { id: "admin", icon: ShieldCheck, label: " Painel de Líderes" },
@@ -3723,6 +3726,10 @@ export default function App() {
                   onSelectUser={(u) => setSelectedPublicUser(u)}
                   communityId={activeCommunity?.id}
                 />
+              )}
+
+              {activeTab === "hierarquia" && (
+                <HierarquiaBSGI />
               )}
 
               {activeTab === "communities" && (
