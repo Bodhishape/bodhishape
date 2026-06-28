@@ -196,6 +196,25 @@ export interface Community {
   daimokuPoints?: number;
   exercisePoints?: number;
   customSubgroups?: string[];
+  
+  // Advanced features fields
+  region?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  language?: string;
+  category?: string;
+  joinCriteria?: "free" | "approval" | "invite";
+  inviteCode?: string;
+  blockedUsers?: string[];
+  pendingRequests?: string[];
+  roles?: Record<string, string>; // userId -> roleName (e.g. "Fundador", "Administrador Geral", "Moderador")
+  rolePermissions?: Record<string, string[]>;
+  notices?: any[];
+  events?: any[];
+  files?: any[];
+  victories?: any[];
+  liveStreams?: any[];
 }
 
 export interface KofuRecord {

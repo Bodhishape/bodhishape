@@ -134,7 +134,7 @@ export default function Leaderboards({ users, activities, onSelectUser, communit
         <p className="text-xs text-indigo-300 leading-relaxed font-medium flex items-start gap-3">
           <span className="text-base leading-none">⚖️</span>
           <span>
-            <strong className="font-bold text-indigo-200">Filosofia de Pontuação BodhiShape:</strong> Os pontos do Ranking Principal são conquistados exclusivamente através de <strong className="text-amber-300">Gongyo da Manhã</strong>, <strong className="text-indigo-300">Gongyo da Noite</strong>, <strong className="text-soka-pink animate-pulse">Daimoku</strong> e <strong className="text-soka-green">Exercícios Físicos</strong>. Recursos de apoio individual como Bons Hábitos, Áreas de Evolução, Leituras, Kofu e Metas são ferramentas de desenvolvimento pessoal privado que auxiliam sua evolução invisível, sem gerar concorrência ou pontuação pública.
+            <strong className="font-bold text-indigo-200">Filosofia de Pontuação BodhiShape:</strong> Os pontos de classificação são baseados em regras flexíveis e configuráveis por cada comunidade. Os administradores podem definir pontuações para Gongyo, Daimoku e Exercícios Físicos de acordo com campanhas ativas. Recursos de apoio individual privado, como Bons Hábitos, Áreas de Evolução, Leituras e Metas, são ferramentas de evolução pessoal que auxiliam no seu desenvolvimento invisível, sem gerar pontuação pública.
           </span>
         </p>
       </div>

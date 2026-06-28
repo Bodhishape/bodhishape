@@ -209,6 +209,47 @@ async function sendConfirmationEmail(user: any) {
   return { sent: true, method: "CONSOLE_PREVIEW", template: emailHtml };
 }
 
+async function sendFeedbackNotification(feedback: any) {
+  const smtpHost = process.env.SMTP_HOST;
+  const smtpPort = process.env.SMTP_PORT;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+  const smtpFrom = process.env.SMTP_FROM || "BodhiShape <no-reply@bodhishape.com>";
+  const notifyTo = process.env.SMTP_FROM || "equipe@bodhishape.com";
+  const typeMap: any = { erro: "⚠️ Reportar Erro", sugestao: "💡 Enviar Sugestão", melhoria: "⚙️ Solicitar Melhoria" };
+  const typeLabel = typeMap[feedback.type] || "📬 Mensagem";
+  const emailSubject = `${typeLabel} - ${feedback.userName}`;
+  const emailHtml = `
+    <div style="font-family: 'Inter', system-ui, sans-serif; background-color: #070114; color: #f1f5f9; padding: 40px 20px; max-width: 600px; margin: 0 auto; border-radius: 24px; border: 1px solid rgba(235, 34, 141, 0.25);">
+      <h2 style="color: #eb228d; font-size: 18px; margin-bottom: 16px;">${typeLabel}</h2>
+      <div style="background-color: #0d0526; border-radius: 12px; padding: 16px; margin-bottom: 16px;">
+        <p style="margin: 4px 0; font-size: 13px;"><strong>Nome:</strong> ${feedback.userName}</p>
+        <p style="margin: 4px 0; font-size: 13px;"><strong>E-mail:</strong> ${feedback.userEmail}</p>
+        <p style="margin: 4px 0; font-size: 13px;"><strong>Data:</strong> ${new Date(feedback.timestamp).toLocaleString("pt-BR")}</p>
+      </div>
+      <div style="background-color: #0d0526; border-radius: 12px; padding: 16px; border-left: 3px solid #eb228d;">
+        <p style="margin: 0; font-size: 13px; line-height: 1.6; white-space: pre-wrap;">${feedback.message}</p>
+      </div>
+    </div>`;
+  const emailText = `${typeLabel}\n\nNome: ${feedback.userName}\nE-mail: ${feedback.userEmail}\nData: ${feedback.timestamp}\n\nMensagem:\n${feedback.message}`;
+  if (smtpHost && smtpPort && smtpUser && smtpPass) {
+    try {
+      const transporter = nodemailer.createTransport({ host: smtpHost, port: parseInt(smtpPort), secure: parseInt(smtpPort) === 465, auth: { user: smtpUser, pass: smtpPass } });
+      await transporter.sendMail({ from: smtpFrom, to: notifyTo, subject: emailSubject, text: emailText, html: emailHtml });
+      console.log(`[EMAIL SYSTEM] Feedback notification sent to ${notifyTo}`);
+      return { sent: true, method: "SMTP" };
+    } catch (err: any) { console.warn("[EMAIL SYSTEM] Error sending feedback email via SMTP:", err.message); }
+  }
+  interceptedEmails.push({ id: "mail-" + Date.now() + "-" + Math.random().toString(36).substr(2, 5), to: notifyTo, subject: emailSubject, text: emailText, html: emailHtml, timestamp: new Date().toISOString() });
+  console.log("\n==================================================================================");
+  console.log(`[EMAIL PREVIEW LOGGER] FEEDBACK NOTIFICATION TO ${notifyTo}`);
+  console.log("Subject:", emailSubject);
+  console.log("----------------------------------------------------------------------------------");
+  console.log(emailText);
+  console.log("==================================================================================\n");
+  return { sent: true, method: "CONSOLE_PREVIEW" };
+}
+
 // 3. Write-Through Local Cache with persistent safety limits
 let dbData: any = {
   users: [],
@@ -663,6 +704,15 @@ function readDB() {
   }
   // Return a deep clone so that routes mutate isolated objects
   return JSON.parse(JSON.stringify(dbData));
+}
+
+function generateInviteToken() {
+  const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let token = "";
+  for (let i = 0; i < 12; i++) {
+    token += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return token;
 }
 
 // Helper to write database (Stores data and propagates precise diffs to Firestore)
@@ -2419,7 +2469,7 @@ app.post("/api/activities/log-combined", async (req, res) => {
           5. Termine integrando ou citando a assinatura/lema oficial: "Suando o Karma, Conquistando Vitórias!" ou semelhante.
         `;
         const response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: "gemini-2.0-flash",
           contents: aiPrompt,
         });
         aiCommentText = response.text?.trim() || "";
@@ -2510,18 +2560,27 @@ app.get("/api/stories", (req, res) => {
   const communityId = req.query.communityId as string;
   let stories = dbData.stories || [];
   if (communityId) {
-    const comm = dbData.communities.find((c: any) => c.id === communityId);
-    if (comm) {
-      const memberIds = comm.participants || [];
-      stories = stories.filter((s: any) => memberIds.includes(s.userId));
+    const directStories = stories.filter((s: any) => s.communityId === communityId);
+    if (directStories.length > 0) {
+      stories = directStories;
+    } else {
+      const comm = dbData.communities.find((c: any) => c.id === communityId);
+      if (comm) {
+        const memberIds = comm.participants || [];
+        stories = stories.filter((s: any) => memberIds.includes(s.userId));
+      } else {
+        stories = [];
+      }
     }
+  } else {
+    stories = stories.filter((s: any) => !s.communityId);
   }
   res.json(stories);
 });
 
 // Create a new victory story
 app.post("/api/stories", (req, res) => {
-  const { userId, userName, userAvatar, category, title, content } = req.body;
+  const { userId, userName, userAvatar, category, title, content, communityId } = req.body;
   if (!userId || !title || !content) {
     return res.status(400).json({ error: "Parâmetros obrigatórios ausentes." });
   }
@@ -2541,7 +2600,8 @@ app.post("/api/stories", (req, res) => {
     content: sanitizeInput(content),
     timestamp: new Date().toISOString(),
     likes: [],
-    comments: []
+    comments: [],
+    communityId: communityId || null
   };
 
   dbData.stories.push(newStory);
@@ -2607,7 +2667,7 @@ app.post("/api/stories/:storyId/comment", (req, res) => {
 
 // Create customized user post
 app.post("/api/posts", (req, res) => {
-  const { userId, content, image } = req.body;
+  const { userId, content, image, communityId, communityIds } = req.body;
 
   // Proteção contra injeções de script de XSS e controle de tamanho da publicação
   if (!userId || userId.length > 128 || hasMalwareOrSuspiciousPatterns(userId)) {
@@ -2653,7 +2713,9 @@ app.post("/api/posts", (req, res) => {
     image: image || "",
     timestamp: new Date().toISOString(),
     reactions: { "❤️": [], "🔥": [], "💪": [], "👏": [], "🌟": [] },
-    comments: [] as any[]
+    comments: [] as any[],
+    communityIds: communityIds || (communityId ? [communityId] : []),
+    communityId: communityId || undefined
   };
 
   dbData.posts.unshift(newPost);
@@ -2950,8 +3012,50 @@ app.post("/api/posts/:postId/comment", (req, res) => {
 });
 
 // Fetch feed posts
-app.get("/api/posts", (req, res) => {
+app.get("/api/posts", async (req: any, res: any) => {
   const dbData = readDB();
+  const idToken = req.idToken;
+
+  // Run the self-healing fictional/mock posts cleanup
+  if (dbData.posts && dbData.posts.length > 0) {
+    const mockIds: string[] = [];
+    dbData.posts = dbData.posts.filter((post: any) => {
+      // Check if this post is a mock Strava/HealthConnect/unauthored post
+      const isStravaMock = post.content && post.content.includes("Sincronizei um novo treino do Strava") && 
+        (!dbData.activities || !dbData.activities.some((a: any) => a.id === `strava-${post.id.replace("post-strava-", "").replace("post-", "")}`));
+      const isHealthConnectMock = post.content && post.content.includes("Sincronizei um novo treino do Health Connect") &&
+        (!dbData.activities || !dbData.activities.some((a: any) => a.id === `hc-${post.id.replace("post-hc-", "").replace("post-", "")}`));
+      
+      const isOtherFictionalMock = post.content && (
+        post.content.includes("Treino Demo") ||
+        post.content.includes("Exemplo Strava") ||
+        post.content.includes("Atividade Mock") ||
+        post.content.includes("Treino fictício")
+      );
+
+      if (isStravaMock || isHealthConnectMock || isOtherFictionalMock) {
+        mockIds.push(post.id);
+        return false; // remove
+      }
+      return true; // keep
+    });
+
+    if (mockIds.length > 0) {
+      console.log(`[CLEAN_POSTS] Found ${mockIds.length} mock/fictional posts to purge.`);
+      if (idToken) {
+        for (const id of mockIds) {
+          try {
+            await removeDoc("posts", id, idToken);
+            console.log(`[CLEAN_POSTS] Successfully removed remote mock post: ${id}`);
+          } catch (err: any) {
+            console.error(`[CLEAN_POSTS] Failed to delete remote mock post ${id}:`, err.message);
+          }
+        }
+      }
+      writeDB(dbData, idToken);
+    }
+  }
+
   const communityId = req.query.communityId as string;
   let result = dbData.posts || [];
   if (communityId) {
@@ -2959,10 +3063,15 @@ app.get("/api/posts", (req, res) => {
     if (comm) {
       const memberIds = comm.participants || [];
       result = result.filter((p: any) => 
-        memberIds.includes(p.userId) || 
-        (p.communityIds && p.communityIds.includes(communityId))
+        (p.communityIds && p.communityIds.includes(communityId)) ||
+        p.communityId === communityId ||
+        (memberIds.includes(p.userId) && (!p.communityIds || p.communityIds.length === 0) && !p.communityId)
       );
+    } else {
+      result = [];
     }
+  } else {
+    result = result.filter((p: any) => !p.communityId && (!p.communityIds || p.communityIds.length === 0));
   }
   res.json(result);
 });
@@ -3034,8 +3143,188 @@ app.get("/api/communities", (req, res) => {
   res.json(dbData.communities);
 });
 
+// GET /api/communities/by-token/:token
+app.get("/api/communities/by-token/:token", (req, res) => {
+  const { token } = req.params;
+  const dbData = readDB();
+  const comm = dbData.communities.find((c: any) => c.inviteToken === token);
+  if (!comm) {
+    return res.status(404).json({ error: "Comunidade não encontrada com este link de convite ou o link foi revogado." });
+  }
+  // Return public details of the community
+  const publicComm = {
+    id: comm.id,
+    name: comm.name,
+    description: comm.description,
+    cover: comm.cover,
+    membersCount: comm.membersCount,
+    startDate: comm.startDate,
+    endDate: comm.endDate,
+    prize: comm.prize,
+    joinCriteria: comm.joinCriteria,
+    inviteToken: comm.inviteToken,
+    creatorId: comm.creatorId,
+    category: comm.category,
+    region: comm.region,
+    city: comm.city,
+    state: comm.state,
+    country: comm.country,
+    language: comm.language,
+    rules: comm.rules,
+    enabledActivities: comm.enabledActivities,
+    participants: comm.participants || [],
+    nominalInvites: comm.nominalInvites || [],
+    invitationHistory: comm.invitationHistory || []
+  };
+  res.json(publicComm);
+});
+
+// POST /api/communities/by-token/:token/join
+app.post("/api/communities/by-token/:token/join", (req, res) => {
+  const { token } = req.params;
+  const { userId } = req.body;
+  if (!token || !userId) {
+    return res.status(400).json({ error: "Token e userId são obrigatórios." });
+  }
+
+  const dbData = readDB();
+  const commIndex = dbData.communities.findIndex((c: any) => c.inviteToken === token);
+  if (commIndex === -1) {
+    return res.status(404).json({ error: "Comunidade não encontrada com este link de convite ou o link foi revogado." });
+  }
+
+  const comm = dbData.communities[commIndex];
+
+  if (comm.blockedUsers && comm.blockedUsers.includes(userId)) {
+    return res.status(403).json({ error: "Entrada negada: Você está bloqueado nesta comunidade." });
+  }
+
+  if (!comm.participants) comm.participants = [];
+  if (!comm.pendingRequests) comm.pendingRequests = [];
+  if (!comm.roles) comm.roles = {};
+
+  if (comm.participants.includes(userId)) {
+    return res.json({ success: true, status: "already_member", community: comm });
+  }
+
+  if (comm.joinCriteria === "invite_nominal") {
+    const user = dbData.users.find((u: any) => u.id === userId);
+    const isNominallyInvited = user && comm.nominalInvites && (
+      comm.nominalInvites.map((e: string) => e.toLowerCase()).includes(user.email?.toLowerCase()) ||
+      comm.nominalInvites.map((e: string) => e.toLowerCase()).includes(user.displayName?.toLowerCase()) ||
+      comm.nominalInvites.map((e: string) => e.toLowerCase()).includes(user.username?.toLowerCase()) ||
+      comm.nominalInvites.map((e: string) => e.toLowerCase()).includes(user.name?.toLowerCase())
+    );
+    if (!isNominallyInvited) {
+      return res.status(403).json({ error: "Entrada recusada: Somente pessoas convidadas nominalmente (por e-mail ou nome) podem entrar nesta comunidade." });
+    }
+  } else if (comm.joinCriteria === "invite_approval") {
+    if (!comm.pendingRequests.includes(userId)) {
+      comm.pendingRequests.push(userId);
+    }
+    dbData.communities[commIndex] = comm;
+    writeDB(dbData, (req as any).idToken);
+    return res.json({ success: true, status: "pending_approval", community: comm });
+  }
+
+  // Join automatically
+  comm.participants.push(userId);
+  comm.membersCount = comm.participants.length;
+  comm.roles[userId] = "Membro";
+
+  if (!comm.invitationHistory) comm.invitationHistory = [];
+  const user = dbData.users.find((u: any) => u.id === userId);
+  const userName = user ? (user.displayName || user.name) : "Usuário Anônimo";
+  comm.invitationHistory.push({
+    userId,
+    userName,
+    joinedAt: new Date().toISOString(),
+    inviteToken: token
+  });
+
+  dbData.communities[commIndex] = comm;
+  writeDB(dbData, (req as any).idToken);
+  res.json({ success: true, status: "joined", community: comm });
+});
+
+// POST /api/communities/:id/revoke-invite
+app.post("/api/communities/:id/revoke-invite", (req: any, res: any) => {
+  const { id } = req.params;
+  const { userId } = req.body;
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) return res.status(404).json({ error: "Comunidade não encontrada." });
+  const comm = dbData.communities[index];
+
+  const isAuthorized = comm.creatorId === userId || comm.roles?.[userId] === "Fundador" || comm.roles?.[userId] === "Administrador Geral" || comm.roles?.[userId] === "Administrador";
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Não autorizado para revogar convites." });
+  }
+
+  const oldToken = comm.inviteToken;
+  comm.inviteToken = generateInviteToken();
+
+  if (!comm.revokedTokens) comm.revokedTokens = [];
+  if (oldToken) comm.revokedTokens.push(oldToken);
+
+  dbData.communities[index] = comm;
+  writeDB(dbData, req.idToken);
+  res.json({ success: true, inviteToken: comm.inviteToken, community: comm });
+});
+
+// POST /api/communities/:id/nominal-invites
+app.post("/api/communities/:id/nominal-invites", (req: any, res: any) => {
+  const { id } = req.params;
+  const { userId, email } = req.body;
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) return res.status(404).json({ error: "Comunidade não encontrada." });
+  const comm = dbData.communities[index];
+
+  const isAuthorized = comm.creatorId === userId || comm.roles?.[userId] === "Fundador" || comm.roles?.[userId] === "Administrador Geral" || comm.roles?.[userId] === "Administrador";
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Não autorizado." });
+  }
+
+  if (!comm.nominalInvites) comm.nominalInvites = [];
+  if (email && !comm.nominalInvites.includes(email)) {
+    comm.nominalInvites.push(email);
+  }
+
+  dbData.communities[index] = comm;
+  writeDB(dbData, req.idToken);
+  res.json({ success: true, nominalInvites: comm.nominalInvites, community: comm });
+});
+
+// DELETE /api/communities/:id/nominal-invites
+app.delete("/api/communities/:id/nominal-invites", (req: any, res: any) => {
+  const { id } = req.params;
+  const { userId, email } = req.body;
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) return res.status(404).json({ error: "Comunidade não encontrada." });
+  const comm = dbData.communities[index];
+
+  const isAuthorized = comm.creatorId === userId || comm.roles?.[userId] === "Fundador" || comm.roles?.[userId] === "Administrador Geral" || comm.roles?.[userId] === "Administrador";
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Não autorizado." });
+  }
+
+  if (comm.nominalInvites) {
+    comm.nominalInvites = comm.nominalInvites.filter((e: string) => e !== email);
+  }
+
+  dbData.communities[index] = comm;
+  writeDB(dbData, req.idToken);
+  res.json({ success: true, nominalInvites: comm.nominalInvites, community: comm });
+});
+
 app.post("/api/communities", (req, res) => {
-  const { userId, name, description, rules, enabledActivities, cover, startDate, endDate, prize, privacy, customSubgroups } = req.body;
+  const { 
+    userId, name, description, rules, enabledActivities, cover, startDate, endDate, prize, privacy, customSubgroups,
+    region, city, state, country, language, category, joinCriteria, inviteCode,
+    gongyoMorningPoints, gongyoEveningPoints, daimokuPoints, exercisePoints
+  } = req.body;
   const dbData = readDB();
 
   const newComm = {
@@ -3052,7 +3341,30 @@ app.post("/api/communities", (req, res) => {
     prize: prize || "Reconhecimento da comunidade",
     privacy: privacy || "public",
     customSubgroups: Array.isArray(customSubgroups) ? customSubgroups : [],
-    participants: [userId]
+    participants: [userId],
+    
+    // Advanced features
+    region: region || "",
+    city: city || "",
+    state: state || "",
+    country: country || "Brasil",
+    language: language || "Português",
+    category: category || "Geral",
+    joinCriteria: joinCriteria || "invite_auto",
+    inviteCode: inviteCode || "",
+    inviteToken: generateInviteToken(),
+    nominalInvites: [],
+    invitationHistory: [],
+    blockedUsers: [],
+    pendingRequests: [],
+    roles: { [userId]: "Fundador" },
+    notices: [],
+    events: [],
+    files: [],
+    gongyoMorningPoints: gongyoMorningPoints !== undefined ? Number(gongyoMorningPoints) : 1,
+    gongyoEveningPoints: gongyoEveningPoints !== undefined ? Number(gongyoEveningPoints) : 1,
+    daimokuPoints: daimokuPoints !== undefined ? Number(daimokuPoints) : 1,
+    exercisePoints: exercisePoints !== undefined ? Number(exercisePoints) : 2
   };
 
   dbData.communities.push(newComm);
@@ -3062,7 +3374,7 @@ app.post("/api/communities", (req, res) => {
 
 app.post("/api/communities/:id/join", (req, res) => {
   const { id } = req.params;
-  const { userId } = req.body;
+  const { userId, inviteCode } = req.body;
   if (!id || !userId) {
     return res.status(400).json({ error: "Parâmetros id e userId são obrigatórios." });
   }
@@ -3074,17 +3386,71 @@ app.post("/api/communities/:id/join", (req, res) => {
   }
 
   const comm = dbData.communities[index];
-  if (!comm.participants) {
-    comm.participants = [];
+  
+  // Checks
+  if (comm.blockedUsers && comm.blockedUsers.includes(userId)) {
+    return res.status(403).json({ error: "Entrada negada: Você está bloqueado pelo administrador nesta comunidade." });
   }
-  if (!comm.participants.includes(userId)) {
-    comm.participants.push(userId);
+
+  if (["invite_auto", "invite_approval", "invite_nominal"].includes(comm.joinCriteria)) {
+    // Check nominal or history authorized
+    const isNominal = comm.nominalInvites && comm.nominalInvites.some(
+      (email: string) => email.toLowerCase() === userId.toLowerCase()
+    );
+    const hasHistory = comm.invitationHistory && comm.invitationHistory.some(
+      (h: any) => h.userId === userId
+    );
+
+    if (comm.joinCriteria === "invite_nominal" && !isNominal && !hasHistory) {
+      return res.status(403).json({ error: "Esta comunidade é restrita para convidados nominais autorizados." });
+    }
+
+    if (!isNominal && !hasHistory) {
+      return res.status(403).json({ error: "Esta comunidade é privada. Entrada permitida apenas utilizando um Link de Convite oficial." });
+    }
+
+    if (comm.joinCriteria === "invite_approval" && !hasHistory) {
+      if (!comm.pendingRequests) comm.pendingRequests = [];
+      if (!comm.pendingRequests.includes(userId)) {
+        comm.pendingRequests.push(userId);
+      }
+      dbData.communities[index] = comm;
+      writeDB(dbData, (req as any).idToken);
+      return res.json({ success: true, status: "pending_approval", community: comm });
+    }
   }
+
+  if (comm.joinCriteria === "invite") {
+    if (comm.inviteCode && comm.inviteCode !== inviteCode) {
+      return res.status(400).json({ error: "Código de acesso/convite inválido." });
+    }
+  }
+
+  if (!comm.participants) comm.participants = [];
+  if (!comm.pendingRequests) comm.pendingRequests = [];
+  if (!comm.roles) comm.roles = {};
+
+  if (comm.participants.includes(userId)) {
+    return res.json({ success: true, status: "already_member", community: comm });
+  }
+
+  if (comm.joinCriteria === "approval") {
+    if (!comm.pendingRequests.includes(userId)) {
+      comm.pendingRequests.push(userId);
+    }
+    dbData.communities[index] = comm;
+    writeDB(dbData, (req as any).idToken);
+    return res.json({ success: true, status: "pending_approval", community: comm });
+  }
+
+  // Regular free join
+  comm.participants.push(userId);
   comm.membersCount = comm.participants.length;
+  comm.roles[userId] = "Membro";
 
   dbData.communities[index] = comm;
   writeDB(dbData, (req as any).idToken);
-  res.json({ success: true, community: comm });
+  res.json({ success: true, status: "joined", community: comm });
 });
 
 app.post("/api/communities/:id/leave", (req, res) => {
@@ -3106,6 +3472,13 @@ app.post("/api/communities/:id/leave", (req, res) => {
   }
   comm.participants = comm.participants.filter((uid: string) => uid !== userId);
   comm.membersCount = comm.participants.length;
+  
+  if (comm.roles) {
+    delete comm.roles[userId];
+  }
+  if (comm.pendingRequests) {
+    comm.pendingRequests = comm.pendingRequests.filter((uid: string) => uid !== userId);
+  }
 
   dbData.communities[index] = comm;
   writeDB(dbData, (req as any).idToken);
@@ -3180,12 +3553,23 @@ app.get("/api/communities/:id/ranking", (req: any, res: any) => {
 // POST /api/communities/:id/update
 app.post("/api/communities/:id/update", (req: any, res: any) => {
   const { id } = req.params;
-  const { userId, name, description, rules, enabledActivities, cover, startDate, endDate, prize, privacy, customSubgroups } = req.body;
+  const { 
+    userId, name, description, rules, enabledActivities, cover, startDate, endDate, prize, privacy, customSubgroups,
+    region, city, state, country, language, category, joinCriteria, inviteCode,
+    gongyoMorningPoints, gongyoEveningPoints, daimokuPoints, exercisePoints
+  } = req.body;
   const dbData = readDB();
   const index = dbData.communities.findIndex((c: any) => c.id === id);
   if (index === -1) return res.status(404).json({ error: "Desafio não encontrado." });
   const comm = dbData.communities[index];
-  if (comm.creatorId !== userId) return res.status(403).json({ error: "Apenas o criador pode editar." });
+  
+  // Only Founder/Creator or Administrador Geral can update general details
+  const userRole = comm.roles?.[userId];
+  const isAuthorized = comm.creatorId === userId || userRole === "Fundador" || userRole === "Administrador Geral" || userRole === "Administrador";
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Apenas administradores podem atualizar as configurações da comunidade." });
+  }
+
   if (name !== undefined) comm.name = name;
   if (description !== undefined) comm.description = description;
   if (rules !== undefined) comm.rules = rules;
@@ -3196,6 +3580,24 @@ app.post("/api/communities/:id/update", (req: any, res: any) => {
   if (prize !== undefined) comm.prize = prize;
   if (privacy !== undefined) comm.privacy = privacy;
   if (customSubgroups !== undefined) comm.customSubgroups = customSubgroups;
+
+  // Advanced fields
+  if (region !== undefined) comm.region = region;
+  if (city !== undefined) comm.city = city;
+  if (state !== undefined) comm.state = state;
+  if (country !== undefined) comm.country = country;
+  if (language !== undefined) comm.language = language;
+  if (category !== undefined) comm.category = category;
+  if (joinCriteria !== undefined) comm.joinCriteria = joinCriteria;
+  if (inviteCode !== undefined) comm.inviteCode = inviteCode;
+  if (req.body.nominalInvites !== undefined) comm.nominalInvites = req.body.nominalInvites;
+  if (!comm.inviteToken) comm.inviteToken = generateInviteToken();
+
+  if (gongyoMorningPoints !== undefined) comm.gongyoMorningPoints = Number(gongyoMorningPoints);
+  if (gongyoEveningPoints !== undefined) comm.gongyoEveningPoints = Number(gongyoEveningPoints);
+  if (daimokuPoints !== undefined) comm.daimokuPoints = Number(daimokuPoints);
+  if (exercisePoints !== undefined) comm.exercisePoints = Number(exercisePoints);
+
   dbData.communities[index] = comm;
   writeDB(dbData, req.idToken);
   res.json(comm);
@@ -3209,12 +3611,387 @@ app.post("/api/communities/:id/kick", (req: any, res: any) => {
   const index = dbData.communities.findIndex((c: any) => c.id === id);
   if (index === -1) return res.status(404).json({ error: "Desafio não encontrado." });
   const comm = dbData.communities[index];
-  if (comm.creatorId !== userId) return res.status(403).json({ error: "Apenas o criador pode remover membros." });
+
+  const userRole = comm.roles?.[userId];
+  const isAuthorized = comm.creatorId === userId || ["Fundador", "Administrador Geral", "Administrador"].includes(userRole);
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Sem permissão para remover membros." });
+  }
+
+  // Prevent kicking creator
+  if (targetUserId === comm.creatorId) {
+    return res.status(400).json({ error: "Não é possível remover o criador da comunidade." });
+  }
+
   comm.participants = (comm.participants || []).filter((uid: string) => uid !== targetUserId);
   comm.membersCount = comm.participants.length;
+
+  if (comm.roles) {
+    delete comm.roles[targetUserId];
+  }
+
   dbData.communities[index] = comm;
   writeDB(dbData, req.idToken);
   res.json({ success: true, community: comm });
+});
+
+// POST /api/communities/:id/approve
+app.post("/api/communities/:id/approve", (req: any, res: any) => {
+  const { id } = req.params;
+  const { userId, targetUserId } = req.body;
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) return res.status(404).json({ error: "Desafio não encontrado." });
+  const comm = dbData.communities[index];
+
+  const userRole = comm.roles?.[userId];
+  const isAuthorized = comm.creatorId === userId || ["Fundador", "Administrador Geral", "Administrador", "Moderador"].includes(userRole);
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Sem permissão para aprovar solicitações." });
+  }
+
+  if (!comm.participants) comm.participants = [];
+  if (!comm.roles) comm.roles = {};
+
+  comm.pendingRequests = (comm.pendingRequests || []).filter((uid: string) => uid !== targetUserId);
+  if (!comm.participants.includes(targetUserId)) {
+    comm.participants.push(targetUserId);
+    comm.roles[targetUserId] = "Membro";
+  }
+  comm.membersCount = comm.participants.length;
+
+  dbData.communities[index] = comm;
+  writeDB(dbData, req.idToken);
+  res.json({ success: true, community: comm });
+});
+
+// POST /api/communities/:id/reject
+app.post("/api/communities/:id/reject", (req: any, res: any) => {
+  const { id } = req.params;
+  const { userId, targetUserId } = req.body;
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) return res.status(404).json({ error: "Desafio não encontrado." });
+  const comm = dbData.communities[index];
+
+  const userRole = comm.roles?.[userId];
+  const isAuthorized = comm.creatorId === userId || ["Fundador", "Administrador Geral", "Administrador", "Moderador"].includes(userRole);
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Sem permissão para rejeitar solicitações." });
+  }
+
+  comm.pendingRequests = (comm.pendingRequests || []).filter((uid: string) => uid !== targetUserId);
+
+  dbData.communities[index] = comm;
+  writeDB(dbData, req.idToken);
+  res.json({ success: true, community: comm });
+});
+
+// POST /api/communities/:id/block
+app.post("/api/communities/:id/block", (req: any, res: any) => {
+  const { id } = req.params;
+  const { userId, targetUserId } = req.body;
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) return res.status(404).json({ error: "Desafio não encontrado." });
+  const comm = dbData.communities[index];
+
+  const userRole = comm.roles?.[userId];
+  const isAuthorized = comm.creatorId === userId || ["Fundador", "Administrador Geral", "Administrador"].includes(userRole);
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Sem permissão para bloquear usuários." });
+  }
+
+  if (targetUserId === comm.creatorId) {
+    return res.status(400).json({ error: "Não é possível bloquear o criador da comunidade." });
+  }
+
+  if (!comm.blockedUsers) comm.blockedUsers = [];
+  if (!comm.blockedUsers.includes(targetUserId)) {
+    comm.blockedUsers.push(targetUserId);
+  }
+
+  comm.participants = (comm.participants || []).filter((uid: string) => uid !== targetUserId);
+  comm.pendingRequests = (comm.pendingRequests || []).filter((uid: string) => uid !== targetUserId);
+  comm.membersCount = comm.participants.length;
+
+  if (comm.roles) {
+    delete comm.roles[targetUserId];
+  }
+
+  dbData.communities[index] = comm;
+  writeDB(dbData, req.idToken);
+  res.json({ success: true, community: comm });
+});
+
+// POST /api/communities/:id/unblock
+app.post("/api/communities/:id/unblock", (req: any, res: any) => {
+  const { id } = req.params;
+  const { userId, targetUserId } = req.body;
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) return res.status(404).json({ error: "Desafio não encontrado." });
+  const comm = dbData.communities[index];
+
+  const userRole = comm.roles?.[userId];
+  const isAuthorized = comm.creatorId === userId || ["Fundador", "Administrador Geral", "Administrador"].includes(userRole);
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Sem permissão para desbloquear usuários." });
+  }
+
+  comm.blockedUsers = (comm.blockedUsers || []).filter((uid: string) => uid !== targetUserId);
+
+  dbData.communities[index] = comm;
+  writeDB(dbData, req.idToken);
+  res.json({ success: true, community: comm });
+});
+
+// POST /api/communities/:id/role
+app.post("/api/communities/:id/role", (req: any, res: any) => {
+  const { id } = req.params;
+  const { userId, targetUserId, roleName } = req.body;
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) return res.status(404).json({ error: "Desafio não encontrado." });
+  const comm = dbData.communities[index];
+
+  const userRole = comm.roles?.[userId];
+  const isAuthorized = comm.creatorId === userId || ["Fundador", "Administrador Geral", "Administrador"].includes(userRole);
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Sem permissão para alterar cargos." });
+  }
+
+  if (targetUserId === comm.creatorId) {
+    return res.status(400).json({ error: "Não é possível alterar o cargo do criador da comunidade." });
+  }
+
+  if (!comm.roles) comm.roles = {};
+  comm.roles[targetUserId] = roleName;
+
+  dbData.communities[index] = comm;
+  writeDB(dbData, req.idToken);
+  res.json({ success: true, community: comm });
+});
+
+// POST /api/communities/:id/events
+app.post("/api/communities/:id/events", (req: any, res: any) => {
+  const { id } = req.params;
+  const { userId, title, description, date, location, category } = req.body;
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) return res.status(404).json({ error: "Desafio não encontrado." });
+  const comm = dbData.communities[index];
+
+  const userRole = comm.roles?.[userId];
+  const isAuthorized = comm.creatorId === userId || ["Fundador", "Administrador Geral", "Administrador", "Responsável pelos Eventos"].includes(userRole);
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Sem permissão para adicionar eventos." });
+  }
+
+  if (!comm.events) comm.events = [];
+  
+  const newEvent = {
+    id: "evt-" + Math.random().toString(36).substr(2, 9),
+    title,
+    description: description || "",
+    date,
+    location: location || "Online",
+    category: category || "evento",
+    createdAt: new Date().toISOString()
+  };
+
+  comm.events.push(newEvent);
+  dbData.communities[index] = comm;
+  writeDB(dbData, req.idToken);
+  res.json({ success: true, event: newEvent, community: comm });
+});
+
+// DELETE /api/communities/:id/events/:eventId
+app.delete("/api/communities/:id/events/:eventId", (req: any, res: any) => {
+  const { id, eventId } = req.params;
+  const { userId } = req.body;
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) return res.status(404).json({ error: "Desafio não encontrado." });
+  const comm = dbData.communities[index];
+
+  const userRole = comm.roles?.[userId];
+  const isAuthorized = comm.creatorId === userId || ["Fundador", "Administrador Geral", "Administrador", "Responsável pelos Eventos"].includes(userRole);
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Sem permissão para remover eventos." });
+  }
+
+  comm.events = (comm.events || []).filter((e: any) => e.id !== eventId);
+  dbData.communities[index] = comm;
+  writeDB(dbData, req.idToken);
+  res.json({ success: true, community: comm });
+});
+
+// POST /api/communities/:id/files
+app.post("/api/communities/:id/files", (req: any, res: any) => {
+  const { id } = req.params;
+  const { userId, name, description, url, category } = req.body;
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) return res.status(404).json({ error: "Desafio não encontrado." });
+  const comm = dbData.communities[index];
+
+  const userRole = comm.roles?.[userId];
+  const isAuthorized = comm.creatorId === userId || ["Fundador", "Administrador Geral", "Administrador", "Responsável pelos Avisos"].includes(userRole);
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Sem permissão para adicionar arquivos." });
+  }
+
+  if (!comm.files) comm.files = [];
+  
+  const newFile = {
+    id: "file-" + Math.random().toString(36).substr(2, 9),
+    name,
+    description: description || "",
+    url,
+    category: category || "estudo",
+    uploadedAt: new Date().toISOString()
+  };
+
+  comm.files.push(newFile);
+  dbData.communities[index] = comm;
+  writeDB(dbData, req.idToken);
+  res.json({ success: true, file: newFile, community: comm });
+});
+
+// DELETE /api/communities/:id/files/:fileId
+app.delete("/api/communities/:id/files/:fileId", (req: any, res: any) => {
+  const { id, fileId } = req.params;
+  const { userId } = req.body;
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) return res.status(404).json({ error: "Desafio não encontrado." });
+  const comm = dbData.communities[index];
+
+  const userRole = comm.roles?.[userId];
+  const isAuthorized = comm.creatorId === userId || ["Fundador", "Administrador Geral", "Administrador", "Responsável pelos Avisos"].includes(userRole);
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Sem permissão para remover arquivos." });
+  }
+
+  comm.files = (comm.files || []).filter((f: any) => f.id !== fileId);
+  dbData.communities[index] = comm;
+  writeDB(dbData, req.idToken);
+  res.json({ success: true, community: comm });
+});
+
+// DELETE /api/communities/:id
+app.delete("/api/communities/:id", (req: any, res: any) => {
+  const { id } = req.params;
+  const { userId } = req.body;
+  const dbData = readDB();
+  const index = dbData.communities.findIndex((c: any) => c.id === id);
+  if (index === -1) return res.status(404).json({ error: "Desafio não encontrado." });
+  const comm = dbData.communities[index];
+
+  const userRole = comm.roles?.[userId];
+  const isAuthorized = comm.creatorId === userId || userRole === "Fundador";
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Apenas o fundador da comunidade pode excluí-la permanentemente." });
+  }
+
+  dbData.communities.splice(index, 1);
+  writeDB(dbData, req.idToken);
+  res.json({ success: true });
+});
+
+// POST /api/communities/:id/ai-coach
+app.post("/api/communities/:id/ai-coach", async (req: any, res: any) => {
+  const { id } = req.params;
+  const { message, prompt, history } = req.body;
+  const actualMessage = message || prompt;
+  if (!actualMessage) {
+    return res.status(400).json({ error: "Mensagem é obrigatória." });
+  }
+
+  const dbData = readDB();
+  const comm = dbData.communities.find((c: any) => c.id === id);
+  if (!comm) return res.status(404).json({ error: "Comunidade não encontrada." });
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  let replyText = "";
+
+  if (apiKey && apiKey !== "MY_GEMINI_API_KEY") {
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const systemPrompt = `
+        Você é o Coach de IA Oficial da comunidade '${comm.name}'.
+        
+        INFORMAÇÕES DA COMUNIDADE:
+        - Nome: ${comm.name}
+        - Categoria: ${comm.category || "Geral"}
+        - Localização: ${comm.city || ""}, ${comm.state || ""}, ${comm.country || "Brasil"}
+        - Descrição: ${comm.description}
+        - Lema/Regras: ${comm.rules}
+        - Atividades Permitidas: ${comm.enabledActivities?.join(", ")}
+        - Sistema de Pontos da Comunidade:
+          * Gongyo Manhã: ${comm.gongyoMorningPoints || 1} ponto(s)
+          * Gongyo Noite: ${comm.gongyoEveningPoints || 1} ponto(s)
+          * Daimoku: ${comm.daimokuPoints || 1} ponto(s) por bloco de 30min
+          * Exercício Físico: ${comm.exercisePoints || 2} ponto(s)
+        
+        INSTRUÇÕES DE TOM E ESTILO:
+        1. Responda em Português do Brasil com entusiasmo, carinho, e alta motivação!
+        2. Combine a filosofia de vida humanista Soka (incentivo mútuo, revolução humana, recomeços, determinação inabalável) com disciplina e dedicação de treinos físicos (saúde, bem-estar, constância).
+        3. Use termos como "Bodhishaper", "revolução humana", "lapidar o espírito", "vencer a si mesmo", "suar o carma", "vitória absoluta".
+        4. Ajude os membros a tirarem dúvidas sobre os objetivos desta comunidade específica e suas regras de pontos.
+        5. Seja conciso (no máximo 3 parágrafos curtos). Seja incrivelmente inspirador!
+      `;
+
+      // Build chat prompt sequence
+      const contents = [
+        { role: "user", parts: [{ text: systemPrompt }] },
+        { role: "model", parts: [{ text: `Entendido! Sou o Coach de IA Oficial de "${comm.name}". Estou pronto para inspirar os Bodhishapers com sabedoria, motivação Soka e energia corporal! Como posso ajudar hoje?` }] }
+      ];
+
+      if (Array.isArray(history)) {
+        for (const h of history) {
+          contents.push({
+            role: h.role === "user" ? "user" : "model",
+            parts: [{ text: h.content }]
+          });
+        }
+      }
+
+      contents.push({ role: "user", parts: [{ text: actualMessage }] });
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents,
+      });
+      replyText = response.text?.trim() || "";
+    } catch (err: any) {
+      console.error("[AI_COACH] Failed to generate AI reply:", err.message);
+    }
+  }
+
+  if (!replyText) {
+    // Intelligent inspiring fallback answers
+    const nameLower = actualMessage.toLowerCase();
+    if (nameLower.includes("ponto") || nameLower.includes("regra") || nameLower.includes("como funciona")) {
+      replyText = `🪷 Olá, Bodhishaper! Na nossa comunidade **"${comm.name}"**, as regras de pontuação foram calibradas sob medida pelos nossos líderes:
+      
+• 🌅 **Gongyo da Manhã**: vale **${comm.gongyoMorningPoints || 1} ponto(s)**.
+• 🌌 **Gongyo da Noite**: vale **${comm.gongyoEveningPoints || 1} ponto(s)**.
+• 📿 **Daimoku**: cada bloco de 30 minutos acumulado soma **${comm.daimokuPoints || 1} ponto(s)**.
+• 🏃‍♂️ **Exercício Físico**: treinos valem **${comm.exercisePoints || 2} ponto(s)**.
+
+O objetivo de estarmos juntos é nos apoiarmos mutuamente, transformando nossa saúde e lapidando nosso espírito dia após dia. Qual o seu foco de hoje?`;
+    } else {
+      replyText = `🌟 Olá, praticante da comunidade **"${comm.name}"**! Que alegria receber sua mensagem! 
+
+Como Coach de IA desta comunidade, estou aqui para lembrar que cada minuto de Daimoku e cada minuto de treino físico são causas fundamentais para a sua saúde corporal e a sua revolução humana. 
+
+Como diz o lema dos Bodhishapers: *"Suando o Karma, Conquistando Vitórias!"* Mantenha o ritmo inabalável e compartilhe seu progresso conosco no feed coletivo! 🪷💪`;
+    }
+  }
+
+  res.json({ reply: replyText });
 });
 
 // GET /api/communities/:id/feed
@@ -3712,7 +4489,7 @@ app.get("/api/ai-incentive", async (req, res) => {
         Use o tom clássico e amigável dos veteranos da BSGI. NÃO inclua aspas, títulos ou markdown.
       `;
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.0-flash",
         contents: prompt,
       });
       quote = response.text?.trim() || "";
@@ -3731,6 +4508,123 @@ app.get("/api/ai-incentive", async (req, res) => {
   }
 
   res.json({ quote });
+});
+
+// IA Contextual — Assistente com contexto completo do usuário
+app.post("/api/ai/chat", async (req, res) => {
+  const { userId, message, history } = req.body;
+  if (!userId || !message) return res.status(400).json({ error: "userId e mensagem são obrigatórios." });
+
+  const dbData = readDB();
+  const user = dbData.users.find((u: any) => u.id === userId);
+  if (!user) return res.status(404).json({ error: "Usuário não encontrado." });
+
+  const activities = (dbData.activities || [])
+    .filter((a: any) => a.userId === userId)
+    .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .slice(0, 20);
+
+  const goals = (dbData.goals || []).filter((g: any) => g.userId === userId);
+  const communities = (dbData.communities || []).filter((c: any) => c.participants?.includes(userId));
+  const kofu = (dbData.kofu || []).filter((k: any) => k.userId === userId);
+  const bs = (dbData.bs_subscription || []).filter((b: any) => b.userId === userId);
+
+  const today = new Date().toISOString().split("T")[0];
+  const todayActs = activities.filter((a: any) => a.timestamp?.startsWith(today));
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  const weekActs = activities.filter((a: any) => a.timestamp >= weekAgo);
+
+  const totalDaimokuMin = weekActs.filter((a: any) => a.type === "daimoku").reduce((s: number, a: any) => s + (a.minutes || 0), 0);
+  const totalExerciseMin = weekActs.filter((a: any) => a.type === "exercise").reduce((s: number, a: any) => s + (a.minutes || 0), 0);
+  const gongyoMorning = todayActs.filter((a: any) => a.type === "gongyo_morning").length;
+  const gongyoEvening = todayActs.filter((a: any) => a.type === "gongyo_evening").length;
+
+  const weightHistory = user.weightHistory || [];
+  const lastWeight = weightHistory.length > 0 ? weightHistory[weightHistory.length - 1].weight : null;
+  const firstWeight = weightHistory.length > 0 ? weightHistory[0].weight : null;
+
+  const context = `
+  DADOS DO USUÁRIO:
+  - Nome: ${user.displayName || user.name}
+  - Divisão: ${user.division} (${user.division === "JS" ? "Juventude Soka" : user.division === "DF" ? "Divisão Feminina" : "Divisão Sênior"})
+  - Cidade: ${user.city}/${user.state}
+  - Região: ${user.region} | Organização: ${user.organization || "—"}
+  - Streak atual: ${user.streak || 0} dias consecutivos
+  - Último acesso: ${user.lastActive || "desconhecido"}
+  - Peso inicial: ${user.initialWeight || "—"} kg | Peso atual: ${user.currentWeight || "—"} kg
+  ${lastWeight && firstWeight ? `- Evolução de peso: ${(lastWeight - firstWeight) > 0 ? "+" : ""}${(lastWeight - firstWeight).toFixed(1)} kg` : ""}
+
+  ATIVIDADES HOJE (${today}):
+  - Gongyo matinal: ${gongyoMorning ? "✅" : "❌"}
+  - Gongyo vespertino: ${gongyoEvening ? "✅" : "❌"}
+  - Daimoku hoje: ${todayActs.filter((a: any) => a.type === "daimoku").reduce((s: number, a: any) => s + (a.minutes || 0), 0)} min
+  - Exercícios hoje: ${todayActs.filter((a: any) => a.type === "exercise").length} sessões
+  - Total de atividades hoje: ${todayActs.length}
+
+  RESUMO SEMANAL (7 dias):
+  - Total daimoku: ${totalDaimokuMin} minutos
+  - Total exercícios: ${totalExerciseMin} minutos
+  - Dias com atividade: ${new Set(weekActs.map((a: any) => a.timestamp?.split("T")[0]).filter(Boolean)).size} dias
+
+  METAS ATIVAS:
+  ${goals.length > 0 ? goals.map((g: any) => `- "${g.title}" (${g.progress}% concluída)`).join("\n") : "Nenhuma meta cadastrada."}
+
+  COMUNIDADES:
+  ${communities.length > 0 ? communities.map((c: any) => `- ${c.name}`).join("\n") : "Nenhuma comunidade ativa."}
+
+  KOFU: ${kofu.length > 0 ? kofu.map((k: any) => `Campanha ${k.campaignId}: ${k.status}`).join(" | ") : "Nenhum registro"}
+  BS IMPRESSO: ${bs.length > 0 ? bs.map((b: any) => `Assinante: ${b.status === "ativo" ? "✅" : "❌"}`).join(" | ") : "Nenhum registro"}
+  `;
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  let reply = "";
+
+  if (apiKey && apiKey !== "MY_GEMINI_API_KEY") {
+    try {
+      const { GoogleGenAI } = await import("@google/genai");
+      const ai = new GoogleGenAI({ apiKey });
+      const chatHistory = (history || []).map((h: any) => ({
+        role: h.role,
+        parts: [{ text: h.content }]
+      }));
+      const systemInstruction = `Você é o "Bodhi IA", assistente espiritual e físico do app BodhiShape. Você tem acesso completo aos dados do usuário abaixo. Responda de forma personalizada, motivacional e prática, em português do Brasil. Use tom amigável de um veterano da BSGI. Seja direto (máx 4 frases). Use emojis com moderação. Se não souber algo, sugira falar com o líder da comunidade.`;
+      const fullPrompt = `${systemInstruction}\n\nCONTEXTO DO USUÁRIO:\n${context}\n\nPERGUNTA DO USUÁRIO:\n${message}`;
+      const response = await ai.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: [{ role: "user", parts: [{ text: fullPrompt }] }]
+      });
+      reply = response.text?.trim() || "";
+    } catch (e) {
+      console.error("Erro no Gemini chat:", e);
+    }
+  }
+
+  if (!reply) {
+    const fallbacks: any = {
+      "treino": "Que tal 30 min de exercício hoje? O corpo é templo do espírito! 💪",
+      "daimoku": "O Daimoku é a base. Mesmo 5 min com determinação transformam o dia. 🪷",
+      "gongyo": "Gongyo matinal e vespertino fortalecem nossa revolução humana. 🙏",
+      "streak": "Sua sequência de dias é sua maior força! Cada dia conta. 🔥",
+      "meta": "Estabeleça metas pequenas e consistentes. Vitórias diárias constroem grandes resultados. 🎯",
+      "peso": "Acompanhe seu peso semanalmente. O progresso real está na constância. ⚖️",
+      "comunidade": "Participe ativamente da sua comunidade. Juntos somos mais fortes! 🌐",
+      "kofu": "Compartilhar o Kofu é plantar sementes de felicidade. 🌱",
+    };
+    for (const [key, val] of Object.entries(fallbacks)) {
+      if (message.toLowerCase().includes(key)) { reply = val as string; break; }
+    }
+    if (!reply) {
+      const generic = [
+        "Continue firme na prática! A revolução humana é dia após dia. 🪷💪",
+        "Cada minutinho de Daimoku e cada repetição no treino constroem um Bodhishaper inabalável. Avante!",
+        "O caminho é a prática diária. Gongyo, Daimoku e Shape. Simples e profundo. 🪷",
+        "Lembre-se: sua maior competição é você mesmo de ontem. 🏆"
+      ];
+      reply = generic[Math.floor(Math.random() * generic.length)];
+    }
+  }
+
+  res.json({ reply, context });
 });
 
 function getDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -4244,29 +5138,17 @@ app.get("/api/daimoku/active", async (req, res) => {
 
 // --- FEEDBACKS ENDPOINTS ---
 app.post("/api/feedbacks", async (req, res) => {
-  const { userId, message } = req.body;
-  if (!userId || !message) {
-    return res.status(400).json({ error: "userId e mensagem são obrigatórios." });
-  }
-
+  const { userId, message, type } = req.body;
+  if (!userId || !message) return res.status(400).json({ error: "userId e mensagem são obrigatórios." });
   const dbData = readDB();
   const user = dbData.users.find((u: any) => u.id === userId);
   const userName = user ? (user.displayName || user.name) : "Usuário Anônimo";
   const userEmail = user ? user.email : "";
-
-  const newFeedback = {
-    id: `fb-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-    userId,
-    userName,
-    userEmail,
-    message: sanitizeInput(message),
-    timestamp: new Date().toISOString()
-  };
-
+  const newFeedback = { id: `fb-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, userId, userName, userEmail, type: type || "sugestao", message: sanitizeInput(message), timestamp: new Date().toISOString() };
   if (!dbData.feedbacks) dbData.feedbacks = [];
   dbData.feedbacks.push(newFeedback);
-  
   writeDB(dbData, (req as any).idToken);
+  sendFeedbackNotification(newFeedback).catch((err: any) => console.error("[EMAIL SYSTEM] Feedback notification error:", err));
   res.json({ success: true, feedback: newFeedback });
 });
 
@@ -4290,6 +5172,8 @@ app.get("/api/lives", async (req, res) => {
   let lives = dbData.lives || [];
   if (communityId) {
     lives = lives.filter((l: any) => l.communityId === communityId);
+  } else {
+    lives = lives.filter((l: any) => !l.communityId);
   }
   res.json(lives);
 });
@@ -4299,8 +5183,19 @@ app.post("/api/lives", async (req, res) => {
   const dbData = readDB();
   const user = dbData.users.find((u: any) => u.id === userId);
 
-  if (!user || !hasRole(user, "admin")) {
-    return res.status(403).json({ error: "Apenas administradores podem iniciar uma transmissão." });
+  let isAuthorized = false;
+  if (user && hasRole(user, "admin")) {
+    isAuthorized = true;
+  } else if (communityId) {
+    const comm = dbData.communities.find((c: any) => c.id === communityId);
+    if (comm) {
+      const userRole = comm.roles?.[userId];
+      isAuthorized = comm.creatorId === userId || ["Fundador", "Administrador Geral", "Administrador"].includes(userRole);
+    }
+  }
+
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "Apenas administradores da comunidade ou administradores gerais podem iniciar uma transmissão." });
   }
 
   if (!title || !videoUrl) {
@@ -4325,7 +5220,12 @@ app.post("/api/lives", async (req, res) => {
     communityId: communityId || undefined
   };
 
-  dbData.lives = [newLive]; // Only allow one active live at a time
+  if (communityId) {
+    dbData.lives = (dbData.lives || []).filter((l: any) => l.communityId !== communityId);
+  } else {
+    dbData.lives = (dbData.lives || []).filter((l: any) => l.communityId);
+  }
+  dbData.lives.push(newLive);
   dbData.live_comments = []; // Reset live chat for the new session
   
   writeDB(dbData, (req as any).idToken);
@@ -4451,6 +5351,10 @@ async function setupViteServerOrProd() {
 
   // Helper to map and log a single Strava activity, checking for duplicates and calculating stats & points
   function logStravaActivity(user: any, item: any, dbData: any) {
+    if (!item || !item.id) {
+      console.log("[STRAVA] Invalid activity item: empty or missing ID.");
+      return null;
+    }
     if (!dbData.activities) dbData.activities = [];
     
     const activityId = "strava-" + item.id;
@@ -4461,8 +5365,24 @@ async function setupViteServerOrProd() {
       return null;
     }
 
-    const logTimestamp = item.start_date_local || item.start_date || new Date().toISOString();
-    const minutes = Math.round((item.moving_time || item.elapsed_time || 1200) / 60);
+    const logTimestamp = item.start_date_local || item.start_date;
+    if (!logTimestamp) {
+      console.log(`[STRAVA] Activity ${item.id} skipped: missing valid timestamp (start_date_local or start_date).`);
+      return null;
+    }
+
+    const rawTime = item.moving_time || item.elapsed_time;
+    if (!rawTime) {
+      console.log(`[STRAVA] Activity ${item.id} skipped: missing valid duration (moving_time or elapsed_time).`);
+      return null;
+    }
+
+    const minutes = Math.round(rawTime / 60);
+    if (minutes <= 0) {
+      console.log(`[STRAVA] Activity ${item.id} skipped: duration rounds to 0 minutes.`);
+      return null;
+    }
+
     const targetDayStr = logTimestamp.split("T")[0];
 
     // Map types
@@ -4516,7 +5436,7 @@ async function setupViteServerOrProd() {
       distanceKm: item.distance ? Number((item.distance / 1000).toFixed(2)) : undefined,
       calories: item.calories || (item.kilojoules ? Math.round(item.kilojoules * 0.239) : undefined),
       sourceApp: "Strava",
-      sourceDevice: item.device_name || "Strava App",
+      sourceDevice: item.device_name || "Strava",
       stravaId: item.id
     };
 
@@ -4528,14 +5448,8 @@ async function setupViteServerOrProd() {
     if (!dbData.posts) dbData.posts = [];
     const postContent = `Sincronizei um novo treino do Strava: ${exerciseCategory} (${exerciseType}) por ${minutes} min! ${item.distance ? `Distância: ${(item.distance / 1000).toFixed(2)} km.` : ""} Corpo ativo, determinação blindada! 💪⚡`;
     
-    const gymPics = [
-      "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=600",
-      "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=600",
-      "https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?w=600",
-      "https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=600"
-    ];
-    const postImg = gymPics[Math.floor(Math.random() * gymPics.length)];
-    const newPostId = "post-" + Math.random().toString(36).substr(2, 9);
+    const postImg = ""; // No default/mock images used
+    const newPostId = "post-strava-" + item.id; // Deterministic ID, no Math.random
     const newPost = {
       id: newPostId,
       userId: user.id,
@@ -5064,7 +5978,7 @@ async function setupViteServerOrProd() {
             Mantenha curto (máximo 2 frases) e termine com otimismo e um lema inspirador. Sem aspas nem markdown.
           `;
           const aiResponse = await ai.models.generateContent({
-            model: "gemini-3.5-flash",
+            model: "gemini-2.0-flash",
             contents: aiPrompt
           });
           const aiComment = aiResponse.text?.trim();
@@ -5377,6 +6291,29 @@ async function bootstrap() {
     dbData = { ...initialData };
     fs.writeFileSync(DB_FILE, JSON.stringify(initialData, null, 2), "utf8");
     console.log("[BOOTSTRAP] Created fresh database.json with seed data.");
+  }
+
+  // Migrate existing communities to have inviteToken and lists
+  if (dbData && Array.isArray(dbData.communities)) {
+    let migrated = false;
+    dbData.communities.forEach((comm: any) => {
+      if (!comm.inviteToken) {
+        comm.inviteToken = generateInviteToken();
+        migrated = true;
+      }
+      if (!comm.nominalInvites) {
+        comm.nominalInvites = [];
+        migrated = true;
+      }
+      if (!comm.invitationHistory) {
+        comm.invitationHistory = [];
+        migrated = true;
+      }
+    });
+    if (migrated) {
+      fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), "utf8");
+      console.log("[MIGRATION] Generated missing invite tokens and lists for communities.");
+    }
   }
 
   // 2. Initialize Firebase and authenticate server connection safely

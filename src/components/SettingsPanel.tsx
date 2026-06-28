@@ -572,9 +572,12 @@ export default function SettingsPanel({ currentUser, onUpdateUser, onLogout, onI
   };
 
   // Submit Feedback Handler
-  const handleFeedbackSubmit = (e: React.FormEvent) => {
+  const handleFeedbackSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!helpText.trim()) return;
+    try {
+      await fetch("/api/feedbacks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: currentUser?.id, message: helpText.trim(), type: helpType }) });
+    } catch (err) { console.error("Error sending feedback:", err); }
     setFeedbackSuccess(true);
     setHelpText("");
     setTimeout(() => setFeedbackSuccess(false), 5000);

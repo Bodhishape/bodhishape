@@ -49,6 +49,7 @@ import MissaoNordesteMap from "./components/MissaoNordesteMap";
 import DaimokuBubbleChart from "./components/DaimokuBubbleChart";
 import PrivateEvolution from "./components/PrivateEvolution";
 import MyDevelopment from "./components/MyDevelopment";
+import AiAssistant from "./components/AiAssistant";
 import ConstancyHall from "./components/ConstancyHall";
 import MuralVitorias from "./components/MuralVitorias";
 import AvisosComunidade from "./components/AvisosComunidade";
@@ -472,7 +473,7 @@ export default function App() {
           setLoggerSuccessMsg(`Sincronização concluída com sucesso! Sincronizados ${data.count} novos treinos no BodhiShape. 🎉`);
           fetchAllData(currentUser.id);
         } else {
-          setLoggerSuccessMsg("Sincronização concluída! Suas atividades já estão atualizadas.");
+          setLoggerSuccessMsg("Nenhuma nova atividade encontrada no Strava.");
         }
       } else {
         alert(data.error || "Erro durante a sincronização do Strava.");
@@ -601,6 +602,39 @@ export default function App() {
   const [showDemoUsers, setShowDemoUsers] = useState(false);
   const [interceptedEmails, setInterceptedEmails] = useState<any[]>([]);
   const [expandedEmailId, setExpandedEmailId] = useState<string | null>(null);
+
+  // Invitation Link States
+  const [inviteCommunityData, setInviteCommunityData] = useState<any | null>(null);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteJoining, setInviteJoining] = useState(false);
+  const [wasLoggedInAtStart, setWasLoggedInAtStart] = useState<boolean>(false);
+
+  // Invite link detection effect
+  useEffect(() => {
+    const hasUserId = !!localStorage.getItem("bodhishape_user_id");
+    setWasLoggedInAtStart(hasUserId);
+
+    const pathname = window.location.pathname;
+    const inviteMatch = pathname.match(/\/(invite|community)\/([a-zA-Z0-9]+)/);
+    if (inviteMatch) {
+      const token = inviteMatch[2];
+      console.log("[INVITE] Detected invite token from path:", token);
+      localStorage.setItem("bodhishape_pending_invite", token);
+      
+      // Rewrite the URL to the root
+      window.history.replaceState({}, document.title, window.location.origin);
+    } else {
+      // Also check query param (?join=... or ?invite=...)
+      const params = new URLSearchParams(window.location.search);
+      const queryJoin = params.get("join") || params.get("invite");
+      if (queryJoin) {
+        console.log("[INVITE] Detected invite token from query:", queryJoin);
+        localStorage.setItem("bodhishape_pending_invite", queryJoin);
+        window.history.replaceState({}, document.title, window.location.origin);
+      }
+    }
+  }, []);
   
   const [firebaseApp, setFirebaseApp] = useState<any>(null);
   const [firebaseAuth, setFirebaseAuth] = useState<any>(null);
@@ -1477,6 +1511,79 @@ export default function App() {
     }
     return headers;
   };
+
+  const handleJoinCommunityViaToken = async (token: string, community: any) => {
+    if (!currentUser) return;
+    setInviteJoining(true);
+    setInviteError(null);
+    try {
+      const authHeaders = await getAuthHeaders();
+      const res = await fetch(`/api/communities/by-token/${token}/join`, {
+        method: "POST",
+        headers: {
+          ...authHeaders,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ userId: currentUser.id })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        // Success! Remove from pending invite
+        localStorage.removeItem("bodhishape_pending_invite");
+        setShowInviteModal(false);
+        setInviteCommunityData(null);
+        
+        // Refresh all data
+        await fetchAllData();
+        
+        // Switch tab to communities and select the community
+        setActiveTab("communities");
+        setActiveCommunity(data.community);
+        
+        setLoggerSuccessMsg(`🎉 Bem-vindo(a) à comunidade "${community.name}"!`);
+        setTimeout(() => setLoggerSuccessMsg(""), 4500);
+      } else {
+        setInviteError(data.error || "Erro ao ingressar na comunidade.");
+      }
+    } catch (err) {
+      console.error(err);
+      setInviteError("Erro de conexão ao processar o convite.");
+    } finally {
+      setInviteJoining(false);
+    }
+  };
+
+  // Check pending invites when currentUser is set
+  useEffect(() => {
+    if (!currentUser) return;
+    const pendingToken = localStorage.getItem("bodhishape_pending_invite");
+    if (!pendingToken) return;
+
+    const fetchInviteCommunity = async () => {
+      try {
+        const res = await fetch(`/api/communities/by-token/${pendingToken}`);
+        if (res.ok) {
+          const comm = await res.json();
+          setInviteCommunityData(comm);
+          
+          if (!wasLoggedInAtStart) {
+            // User was NOT logged in at start -> Join automatically!
+            await handleJoinCommunityViaToken(pendingToken, comm);
+          } else {
+            // User WAS already logged in -> Show details dialog so they can join immediately!
+            setShowInviteModal(true);
+          }
+        } else {
+          console.warn("Invalid or expired invite token. Removing from cache.");
+          localStorage.removeItem("bodhishape_pending_invite");
+        }
+      } catch (err) {
+        console.error("Error fetching invite community:", err);
+      }
+    };
+
+    fetchInviteCommunity();
+  }, [currentUser]);
 
   // Log active item
   const handleLogActivity = async (payload: {
@@ -4298,7 +4405,7 @@ export default function App() {
                     {[
                       {
                         q: "Como funciona o sistema de pontuação BodhiShape?",
-                        a: "Os pontos premiam as três causas fundamentais: 1) Gongyo da Manhã/Noite: 100 pontos cada. 2) Daimoku: 10 pontos por cada minuto registrado no Cronômetro. 3) Exercícios físicos (Caminhada, Corrida, Ciclismo, etc): 5 pontos por cada minuto de treino. Essa pontuação alimenta o Ranking de Constância e o Mural Territorial!"
+                        a: "O BodhiShape possui um sistema de pontuação flexível e configurável. Cada comunidade pode definir suas próprias regras de pontuação de acordo com seus objetivos e campanhas. É possível configurar, por exemplo: • Quantos pontos vale o Gongyo da manhã e da noite; • Como o Daimoku será pontuado (por minuto, por tempo, por meta, etc.); • Como os exercícios físicos serão pontuados; • Quais atividades geram pontos; • Limites diários de pontuação; • Bônus por constância; • Campanhas temporárias; • Medalhas, conquistas e critérios do ranking. O aplicativo apenas registra todas as atividades realizadas pelos participantes. A forma como essas atividades são convertidas em pontos é definida pelos administradores de cada comunidade. Isso permite que o BodhiShape seja utilizado por diferentes comunidades, grupos e campanhas sem necessidade de alterar o código do aplicativo."
                       },
                       {
                         q: "Como usar o Cronômetro de Daimoku com áudio opcional?",
@@ -4366,7 +4473,8 @@ export default function App() {
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
                               userId: currentUser?.id,
-                              message: helpFeedbackText
+                              message: helpFeedbackText,
+                              type: "sugestao"
                             })
                           });
                           if (res.ok) {
@@ -4947,7 +5055,7 @@ export default function App() {
                   onClick={async () => {
                     if (currentUser) {
                       const startIso = localStorage.getItem("daimoku_timer_start_timestamp") || 
-                        new Date(Date.now() - daimokuCompletedMinutes * 60 * 1000).toISOString();
+                      new Date(Date.now() - daimokuCompletedMinutes * 60 * 1000).toISOString();
                       const endIso = new Date().toISOString();
 
                       await handleLogActivity({
@@ -4986,6 +5094,126 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Invitation Link Modal Overlay */}
+      <AnimatePresence>
+        {showInviteModal && inviteCommunityData && (
+          <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 z-50">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="bg-[#0b0314] border border-pink-500/30 rounded-3xl p-6 max-w-md w-full text-center space-y-5 shadow-2xl relative overflow-hidden"
+            >
+              {/* Glowing accent background */}
+              <div className="absolute -top-24 -left-24 w-48 h-48 rounded-full bg-pink-500/10 blur-3xl pointer-events-none" />
+              <div className="absolute -bottom-24 -right-24 w-48 h-48 rounded-full bg-indigo-500/10 blur-3xl pointer-events-none" />
+
+              {/* Cover Image or Icon */}
+              {inviteCommunityData.cover ? (
+                <div className="w-full h-28 rounded-2xl overflow-hidden border border-slate-800 relative">
+                  <img
+                    src={inviteCommunityData.cover}
+                    alt={inviteCommunityData.name}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#0b0314] via-transparent to-transparent" />
+                </div>
+              ) : (
+                <div className="mx-auto w-16 h-16 rounded-2xl bg-gradient-to-tr from-pink-500/20 to-indigo-500/20 border border-pink-500/30 flex items-center justify-center text-3xl">
+                  🏟️
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-center gap-2">
+                  <span className="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-pink-500/10 text-pink-400 border border-pink-500/20">
+                    {inviteCommunityData.category || "Comunidade"}
+                  </span>
+                  <span className="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                    {inviteCommunityData.participants?.length || 0} Membros
+                  </span>
+                </div>
+                
+                <h3 className="text-lg font-black text-slate-100 font-heading tracking-wide">
+                  {inviteCommunityData.name}
+                </h3>
+                
+                <p className="text-xs text-slate-400 leading-relaxed line-clamp-3">
+                  {inviteCommunityData.description || "Sem descrição disponível."}
+                </p>
+              </div>
+
+              {/* Information table */}
+              <div className="bg-slate-950/60 border border-slate-900 rounded-2xl p-3.5 space-y-2.5 text-left text-xs font-sans">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Criado por:</span>
+                  <span className="text-slate-300 font-bold">{inviteCommunityData.creatorName || "Líder BodhiShape"}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Critério de Entrada:</span>
+                  <span className="text-indigo-400 font-bold">
+                    {inviteCommunityData.joinCriteria === "invite_approval" ? "Requer Aprovação" : 
+                     inviteCommunityData.joinCriteria === "invite_nominal" ? "Apenas Convidados Nominais" : 
+                     "Acesso Imediato"}
+                  </span>
+                </div>
+                {inviteCommunityData.rules && (
+                  <div className="space-y-1 pt-1.5 border-t border-slate-900">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase font-mono block">📜 Regra / Determinação:</span>
+                    <p className="text-[10.5px] text-slate-400 italic line-clamp-2">"{inviteCommunityData.rules}"</p>
+                  </div>
+                )}
+              </div>
+
+              {inviteError && (
+                <div className="p-3 bg-red-955/20 border border-red-900/30 text-red-350 text-xs rounded-xl font-sans text-left">
+                  {inviteError}
+                </div>
+              )}
+
+              <div className="flex flex-col gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={inviteJoining}
+                  onClick={() => {
+                    const pendingToken = localStorage.getItem("bodhishape_pending_invite");
+                    if (pendingToken) {
+                      handleJoinCommunityViaToken(pendingToken, inviteCommunityData);
+                    }
+                  }}
+                  className="w-full py-3 bg-gradient-to-r from-pink-500 to-indigo-600 hover:from-pink-600 hover:to-indigo-700 text-white font-extrabold text-xs rounded-xl transition cursor-pointer shadow-md shadow-pink-950/20 flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  {inviteJoining ? (
+                    <span>Processando...</span>
+                  ) : (
+                    <>
+                      <span>INGRESSAR IMEDIATAMENTE</span>
+                      <span>➔</span>
+                    </>
+                  )}
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.removeItem("bodhishape_pending_invite");
+                    setShowInviteModal(false);
+                    setInviteCommunityData(null);
+                  }}
+                  className="w-full py-2.5 bg-slate-900 hover:bg-slate-850 text-slate-400 font-bold text-xs rounded-xl border border-slate-850 transition cursor-pointer"
+                >
+                  Ignorar Convite
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Floating AI Contextual Assistant */}
+      {currentUser && <AiAssistant currentUser={currentUser} />}
 
     </div>
   );

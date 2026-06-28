@@ -4,12 +4,15 @@ import {
   MessageSquare, Send, Trophy, ArrowLeft, Share2, QrCode, Lock, Key, Edit,
   Calendar, Award, Globe, Mail, Eye, Pin, PinOff, Smile, Camera, 
   ThumbsUp, BarChart, TrendingUp, AlertCircle, X, ChevronRight, CheckCircle2,
-  MapPin, Copy, Link
+  MapPin, Copy, Link, Bell, Settings, Trash2, UserCheck, UserX, Play, FileText, Download, ExternalLink
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Community, User, Activity } from "../types";
 import { hasRole } from "../lib/roles";
 import MissaoNordesteMap from "./MissaoNordesteMap";
+import ConstancyHall from "./ConstancyHall";
+import MuralVitorias from "./MuralVitorias";
+import SocialFeed from "./SocialFeed";
 
 interface CommunitiesPanelProps {
   currentUser: User | null;
@@ -29,6 +32,11 @@ interface CommunitiesPanelProps {
   activities: Activity[];
   firebaseAuth?: any;
   onSelectCommunity?: (comm: any) => void;
+  posts?: any[];
+  onComment?: (postId: string, content: string) => void;
+  onReact?: (postId: string, reaction: string) => void;
+  onNewPost?: (content: string, image: string) => void;
+  onSubmitCombined?: (payload: any) => Promise<any>;
 }
 
 interface ChatMessage {
@@ -43,7 +51,20 @@ interface ChatMessage {
   isPinned?: boolean;
 }
 
-export default function CommunitiesPanel({ currentUser, communities, onAddCommunity, users, activities, firebaseAuth, onSelectCommunity }: CommunitiesPanelProps) {
+export default function CommunitiesPanel({ 
+  currentUser, 
+  communities, 
+  onAddCommunity, 
+  users, 
+  activities, 
+  firebaseAuth, 
+  onSelectCommunity,
+  posts = [],
+  onComment,
+  onReact,
+  onNewPost,
+  onSubmitCombined
+}: CommunitiesPanelProps) {
   // Rich fallback seed list in case DB has old structure
   const [localCommunities, setLocalCommunities] = useState<any[]>([]);
 
@@ -78,6 +99,51 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
   const [cover, setCover] = useState("");
   const [customSubgroupsInput, setCustomSubgroupsInput] = useState("");
   const [showForm, setShowForm] = useState(false);
+
+  // Advanced metadata fields for creation/edit
+  const [regionField, setRegionField] = useState("");
+  const [cityField, setCityField] = useState("");
+  const [stateField, setStateField] = useState("");
+  const [countryField, setCountryField] = useState("Brasil");
+  const [languageField, setLanguageField] = useState("Português");
+  const [categoryField, setCategoryField] = useState("Geral");
+  const [joinCriteria, setJoinCriteria] = useState<string>("invite_auto");
+  const [inviteCodeField, setInviteCodeField] = useState("");
+
+  // Sub-resource interactions
+  const [iaHistory, setIaHistory] = useState<{ role: "user" | "model"; content: string }[]>([]);
+  const [iaMessage, setIaMessage] = useState("");
+  const [iaLoading, setIaLoading] = useState(false);
+
+  const [evtTitle, setEvtTitle] = useState("");
+  const [evtDesc, setEvtDesc] = useState("");
+  const [evtDate, setEvtDate] = useState("");
+  const [evtLocation, setEvtLocation] = useState("");
+  const [evtCategory, setEvtCategory] = useState("evento");
+
+  const [fileName, setFileName] = useState("");
+  const [fileDesc, setFileDesc] = useState("");
+  const [fileUrl, setFileUrl] = useState("");
+  const [fileCat, setFileCat] = useState("estudo");
+
+  const [liveTitle, setLiveTitle] = useState("");
+  const [liveDesc, setLiveDesc] = useState("");
+  const [liveUrl, setLiveUrl] = useState("");
+
+  const [selectedMemberId, setSelectedMemberId] = useState("");
+  const [assignRoleName, setAssignRoleName] = useState("Membro");
+  const [adminMsg, setAdminMsg] = useState("");
+
+  // Notice board management within communities
+  const [communityNotices, setCommunityNotices] = useState<any[]>([]);
+  const [communityEvents, setCommunityEvents] = useState<any[]>([]);
+  const [communityFiles, setCommunityFiles] = useState<any[]>([]);
+  const [communityLives, setCommunityLives] = useState<any[]>([]);
+  const [noticesLoading, setNoticesLoading] = useState(false);
+  const [noticeTitle, setNoticeTitle] = useState("");
+  const [noticeDesc, setNoticeDesc] = useState("");
+  const [noticeType, setNoticeType] = useState<"campaign" | "challenge" | "announcement" | "study">("announcement");
+  const [noticeColor, setNoticeColor] = useState("from-sky-900/30 to-indigo-900/20 border-sky-500/30 text-sky-300");
 
   // Unlocking private challenges code states
   const [inviteCodeInput, setInviteCodeInput] = useState("");
@@ -118,10 +184,7 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
 
   // Preset covers
   const availableCovers = [
-    { name: "Soka Golden Forest", url: "https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?w=800" },
-    { name: "Gym Steel Row", url: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=800" },
-    { name: "Peaceful Meditation", url: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?w=800" },
-    { name: "Vibrant Sunshine", url: "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=800" }
+    { name: "Padrão Abstrato", url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800" }
   ];
 
   // Quick message presets
@@ -215,6 +278,50 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
     const interval = setInterval(fetchFeed, 15000);
     return () => clearInterval(interval);
   }, [selectedChallenge?.id, activeTab]);
+
+  // Sync notices when visiting notices tab
+  useEffect(() => {
+    if (!selectedChallenge || activeTab !== "avisos") return;
+    const fetchNotices = async () => {
+      setNoticesLoading(true);
+      try {
+        const res = await fetch(`/api/notices?communityId=${selectedChallenge.id}`);
+        if (res.ok) {
+          const data = await res.json();
+          setCommunityNotices(data);
+        }
+      } catch (err) {
+        console.error("Erro ao carregar avisos:", err);
+      } finally {
+        setNoticesLoading(false);
+      }
+    };
+    fetchNotices();
+  }, [selectedChallenge?.id, activeTab]);
+
+  // Sync lives when visiting events tab
+  useEffect(() => {
+    if (!selectedChallenge || activeTab !== "eventos") return;
+    const fetchLives = async () => {
+      try {
+        const res = await fetch(`/api/lives?communityId=${selectedChallenge.id}`);
+        if (res.ok) {
+          const data = await res.json();
+          setCommunityLives(data);
+        }
+      } catch (err) {
+        console.error("Erro ao carregar transmissões:", err);
+      }
+    };
+    fetchLives();
+  }, [selectedChallenge?.id, activeTab]);
+
+  // Sync events and library files from the community object
+  useEffect(() => {
+    if (!selectedChallenge) return;
+    setCommunityEvents(selectedChallenge.events || []);
+    setCommunityFiles(selectedChallenge.files || []);
+  }, [selectedChallenge]);
 
   const isAllowedRegion = (regionStr: string) => {
     if (!regionStr) return false;
@@ -351,6 +458,227 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
     setReceivedInvites(prev => prev.filter(inv => inv.id !== inviteId));
   };
 
+  const handleSendIaMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!iaMessage.trim() || iaLoading || !selectedChallenge) return;
+
+    const userPrompt = iaMessage;
+    setIaMessage("");
+    setIaHistory(prev => [...prev, { role: "user", content: userPrompt }]);
+    setIaLoading(true);
+
+    try {
+      const res = await fetch(`/api/communities/${selectedChallenge.id}/ai-coach`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: currentUser?.id, prompt: userPrompt })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setIaHistory(prev => [...prev, { role: "model", content: data.reply }]);
+      } else {
+        setIaHistory(prev => [...prev, { role: "model", content: "Erro ao consultar o Coach IA. Por favor, tente novamente." }]);
+      }
+    } catch (err) {
+      console.error(err);
+      setIaHistory(prev => [...prev, { role: "model", content: "Erro na conexão com o servidor." }]);
+    } finally {
+      setIaLoading(false);
+    }
+  };
+
+  const handleAddCommunityEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!evtTitle || !evtDate || !selectedChallenge) return;
+    try {
+      const res = await fetch(`/api/communities/${selectedChallenge.id}/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: currentUser?.id,
+          title: evtTitle,
+          description: evtDesc,
+          date: evtDate,
+          location: evtLocation,
+          category: evtCategory
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.community) {
+          setSelectedChallenge(data.community);
+          setEvtTitle("");
+          setEvtDesc("");
+          setEvtDate("");
+          setEvtLocation("");
+          setAdminMsg("Evento adicionado com sucesso!");
+          setTimeout(() => setAdminMsg(""), 3000);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteCommunityEvent = async (eventId: string) => {
+    if (!selectedChallenge) return;
+    try {
+      const res = await fetch(`/api/communities/${selectedChallenge.id}/events/${eventId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: currentUser?.id })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.community) {
+          setSelectedChallenge(data.community);
+          setAdminMsg("Evento removido com sucesso!");
+          setTimeout(() => setAdminMsg(""), 3000);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAddCommunityFile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!fileName || !fileUrl || !selectedChallenge) return;
+    try {
+      const res = await fetch(`/api/communities/${selectedChallenge.id}/files`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: currentUser?.id,
+          name: fileName,
+          description: fileDesc,
+          url: fileUrl,
+          category: fileCat
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.community) {
+          setSelectedChallenge(data.community);
+          setFileName("");
+          setFileDesc("");
+          setFileUrl("");
+          setAdminMsg("Arquivo adicionado com sucesso!");
+          setTimeout(() => setAdminMsg(""), 3000);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteCommunityFile = async (fileId: string) => {
+    if (!selectedChallenge) return;
+    try {
+      const res = await fetch(`/api/communities/${selectedChallenge.id}/files/${fileId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: currentUser?.id })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.community) {
+          setSelectedChallenge(data.community);
+          setAdminMsg("Arquivo removido com sucesso!");
+          setTimeout(() => setAdminMsg(""), 3000);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAddCommunityNotice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!noticeTitle || !noticeDesc || !selectedChallenge) return;
+    try {
+      const res = await fetch(`/api/notices`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: noticeType,
+          title: noticeTitle,
+          description: noticeDesc,
+          color: noticeColor,
+          communityId: selectedChallenge.id
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCommunityNotices(prev => [...prev, data]);
+        setNoticeTitle("");
+        setNoticeDesc("");
+        setAdminMsg("Aviso fixado no mural!");
+        setTimeout(() => setAdminMsg(""), 3000);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteCommunityNotice = async (noticeId: string) => {
+    try {
+      const res = await fetch(`/api/notices/${noticeId}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        setCommunityNotices(prev => prev.filter(n => n.id !== noticeId));
+        setAdminMsg("Aviso removido do mural!");
+        setTimeout(() => setAdminMsg(""), 3000);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAssignMemberRole = async (targetUserId: string, roleName: string) => {
+    if (!selectedChallenge) return;
+    try {
+      const res = await fetch(`/api/communities/${selectedChallenge.id}/roles`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: currentUser?.id,
+          targetUserId,
+          roleName
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.community) {
+          setSelectedChallenge(data.community);
+          setAdminMsg("Cargo atribuído com sucesso!");
+          setTimeout(() => setAdminMsg(""), 3000);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteCommunity = async () => {
+    if (!selectedChallenge) return;
+    if (!window.confirm("ATENÇÃO: Deseja realmente excluir esta comunidade definitivamente? Esta ação é irreversível.")) return;
+    try {
+      const res = await fetch(`/api/communities/${selectedChallenge.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: currentUser?.id })
+      });
+      if (res.ok) {
+        setSelectedChallenge(null);
+        if (window.location) window.location.reload();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const toggleActivitySelection = (actId: string) => {
     if (activitiesSelected.includes(actId)) {
       setActivitiesSelected(activitiesSelected.filter((a) => a !== actId));
@@ -381,7 +709,15 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
       gongyoEveningPoints,
       daimokuPoints,
       exercisePoints,
-      customSubgroups: parsedSubgroups
+      customSubgroups: parsedSubgroups,
+      region: regionField,
+      city: cityField,
+      state: stateField,
+      country: countryField,
+      language: languageField,
+      category: categoryField,
+      joinCriteria,
+      inviteCode: inviteCodeField
     };
 
     onAddCommunity(payload);
@@ -393,7 +729,11 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
       ...payload,
       creatorId: currentUser?.id || "user-1",
       membersCount: 1,
-      participants: [currentUser?.id || "user-1"]
+      participants: [currentUser?.id || "user-1"],
+      roles: { [currentUser?.id || "user-1"]: "Fundador" },
+      inviteToken: "GEN-" + Math.random().toString(36).substr(2, 9).toUpperCase(),
+      nominalInvites: [],
+      invitationHistory: []
     };
 
     setLocalCommunities(prev => [...prev, mockCreated]);
@@ -409,6 +749,14 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
     setEndDate("2026-12-31");
     setCover("");
     setCustomSubgroupsInput("");
+    setRegionField("");
+    setCityField("");
+    setStateField("");
+    setCountryField("Brasil");
+    setLanguageField("Português");
+    setCategoryField("Geral");
+    setJoinCriteria("free");
+    setInviteCodeField("");
     setShowForm(false);
   };
 
@@ -435,7 +783,15 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
       gongyoEveningPoints,
       daimokuPoints,
       exercisePoints,
-      customSubgroups: parsedSubgroups
+      customSubgroups: parsedSubgroups,
+      region: regionField,
+      city: cityField,
+      state: stateField,
+      country: countryField,
+      language: languageField,
+      category: categoryField,
+      joinCriteria,
+      inviteCode: inviteCodeField
     };
 
     try {
@@ -509,60 +865,57 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
     }
   };
 
-  const handleUnlockPrivateGroupByCode = (e: React.FormEvent) => {
+  const handleUnlockPrivateGroupByCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteCodeInput.trim()) return;
+    if (!inviteCodeInput.trim() || !currentUser) return;
 
-    const code = inviteCodeInput.trim().toUpperCase();
+    let token = inviteCodeInput.trim();
+    // If it's a URL, extract the token
+    if (token.includes("/invite/") || token.includes("/community/")) {
+      const parts = token.split('/');
+      token = parts[parts.length - 1] || token;
+    }
+    // Clean query parameters if any
+    if (token.includes("?")) {
+      token = token.split("?")[0];
+    }
 
-    // Check code matches models
-    const accessCodes: Record<string, string> = {
-      "SHAPE25": "model-community",
-      "STUDY7": "comm-kotekitai",
-      "KOFURRECIFE": "comm-dfrecife",
-      "NORDESTE2": "comm-nordeste2"
-    };
-
-    const targetId = accessCodes[code];
-    const targetChallenge = localCommunities.find(c => 
-      c.id === targetId || 
-      c.id.toUpperCase() === code || 
-      c.id.substr(0, 8).toUpperCase() === code || 
-      c.entryCode?.toUpperCase() === code ||
-      (c.name && c.name.toUpperCase() === code)
-    );
-
-    if (targetChallenge) {
-      if ((targetChallenge.id === "comm-nordeste1" || targetChallenge.name?.toLowerCase().includes("nordeste 1")) && currentUser && !isAllowedRegion(currentUser.region)) {
-        setUnlockErrorMsg("❌ Este desafio é exclusivo para membros do Nordeste (RM Pernambuco Norte, PE Sul, PE Oeste, RE Paraíba, RE Alagoas e RE Sergipe).");
-        setUnlockSuccessMsg("");
-        return;
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (firebaseAuth?.currentUser) {
+        const idToken = await firebaseAuth.currentUser.getIdToken();
+        headers["Authorization"] = `Bearer ${idToken}`;
       }
+      const res = await fetch(`/api/communities/by-token/${token}/join`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ userId: currentUser.id })
+      });
 
-      setJoinedChallenges(prev => ({ ...prev, [targetChallenge.id]: true }));
-      setUnlockSuccessMsg(`✅ Desbloqueado! Você ingressou no desafio "${targetChallenge.name}".`);
-      setUnlockErrorMsg("");
-      setInviteCodeInput("");
-      
-      // Update participants
-      setLocalCommunities(comms => comms.map(c => {
-        if (c.id === targetChallenge.id) {
-          const uids = c.participants || [];
-          if (currentUser && !uids.includes(currentUser.id)) {
-            uids.push(currentUser.id);
-          }
-          return { ...c, participants: uids, membersCount: uids.length };
-        }
-        return c;
-      }));
-    } else {
-      // Check if it matches our pending invite "Missão Nordeste 2"
-      if (code === "NORDESTE2" && receivedInvites.length > 0) {
-        handleAcceptInvite(receivedInvites[0]);
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setUnlockSuccessMsg(`✅ Sucesso! Você ingressou na comunidade "${data.community.name}".`);
+        setUnlockErrorMsg("");
         setInviteCodeInput("");
-        return;
+        
+        // Update local state with the returned community
+        setLocalCommunities(comms => {
+          const exists = comms.some(c => c.id === data.community.id);
+          if (exists) {
+            return comms.map(c => c.id === data.community.id ? data.community : c);
+          } else {
+            return [...comms, data.community];
+          }
+        });
+        setJoinedChallenges(prev => ({ ...prev, [data.community.id]: true }));
+        setSelectedChallenge(data.community);
+      } else {
+        setUnlockErrorMsg(data.error || "Código de convite ou link inválido/revogado.");
+        setUnlockSuccessMsg("");
       }
-      setUnlockErrorMsg("❌ Código inválido ou não encontrado. Tente códigos como 'NORDESTE2', 'SHAPE25' ou o código de convite da sua comunidade.");
+    } catch (err) {
+      console.error(err);
+      setUnlockErrorMsg("❌ Erro de conexão ao validar o convite.");
       setUnlockSuccessMsg("");
     }
   };
@@ -761,6 +1114,7 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
   const challengeFeedList = selectedChallenge ? getChallengePosts(selectedChallenge) : [];
   const activeChatMessages = selectedChallenge ? (chats[selectedChallenge.id] || []) : [];
   const pinnedChatMessages = activeChatMessages.filter(m => m.isPinned);
+  const isCreator = currentUser && selectedChallenge && selectedChallenge.creatorId === currentUser.id;
 
   return (
     <div className="space-y-6" id="communities-reconstructed-wrapper">
@@ -795,7 +1149,7 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
                 Desbloquear por Código
               </button>
 
-              {currentUser && hasRole(currentUser, ["admin", "leader", "district_leader", "regional_leader", "community_admin"]) && (
+              {currentUser && (
                 <button
                   onClick={() => {
                     setShowForm(!showForm);
@@ -803,7 +1157,7 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
                   className="px-4 py-2.5 bg-indigo-650 hover:bg-indigo-600 border border-indigo-550/20 text-white text-xs font-extrabold rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer select-none"
                 >
                   <Plus className="w-4 h-4" />
-                  Criar Desafio
+                  Criar Comunidade
                 </button>
               )}
             </div>
@@ -828,36 +1182,29 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
             </button>
 
             <div className="space-y-1">
-              <span className="text-[9px] font-bold uppercase bg-amber-500/10 text-amber-400 border border-amber-500/20 py-0.5 px-2.5 rounded-full tracking-wider font-mono">
-                🔐 Acesso a Desafios Privativos
+              <span className="text-[9px] font-bold uppercase bg-pink-500/10 text-pink-400 border border-pink-500/20 py-0.5 px-2.5 rounded-full tracking-wider font-mono">
+                🔗 Link ou Token de Convite
               </span>
-              <h3 className="text-base font-black font-heading text-slate-100 mt-1">Conectar Missão Regional</h3>
+              <h3 className="text-base font-black font-heading text-slate-101 mt-1">Ingressar via Convite</h3>
               <p className="text-[11px] text-slate-400 leading-relaxed">
-                Digite um código de acesso para validar sua participação em campanhas restritas dos seus blocos regionais.
+                Cole o link de convite recebido (ex: <span className="text-slate-300 font-mono">https://bodhishape.app/invite/abc123xyz</span>) ou digite apenas o token identificador de 12 caracteres para entrar na comunidade correspondente.
               </p>
             </div>
 
             <form onSubmit={handleUnlockPrivateGroupByCode} className="space-y-3">
-              <div className="p-2.5 bg-slate-950/80 rounded-xl border border-slate-850 space-y-1 text-[10px] text-slate-450 font-mono">
-                <span className="text-amber-400 font-extrabold block uppercase">CÓDIGOS DE DEMONSTRAÇÃO:</span>
-                <div>• <span className="text-indigo-300 font-bold">NORDESTE2</span> - Convite Missão Nordeste 2</div>
-                <div>• <span className="text-indigo-300 font-bold">SHAPE25</span> - BodhiShape</div>
-                <div>• <span className="text-indigo-300 font-bold">STUDY7</span> - Desafio Kotekitai</div>
-              </div>
-
               <input
                 type="text"
-                placeholder="Exemplo: NORDESTE2"
+                placeholder="Cole o Link de Convite ou digite o Token"
                 value={inviteCodeInput}
                 onChange={(e) => setInviteCodeInput(e.target.value)}
-                className="w-full text-xs font-bold border border-slate-800 bg-slate-950 text-amber-300 px-3 py-2.5 rounded-xl uppercase tracking-widest text-center focus:border-indigo-505 outline-none font-mono"
+                className="w-full text-xs font-bold border border-slate-800 bg-slate-950 text-indigo-300 px-3 py-2.5 rounded-xl text-center focus:border-indigo-505 outline-none font-mono"
               />
 
               <button
                 type="submit"
                 className="w-full py-2.5 bg-indigo-650 hover:bg-indigo-600 text-white font-bold text-xs rounded-xl shadow transition cursor-pointer"
               >
-                Liberar Acesso e Ingressar ➔
+                Validar Convite e Ingressar ➔
               </button>
             </form>
 
@@ -1085,6 +1432,84 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
               </div>
             </div>
 
+            {/* Advanced Community Metadata & Criteria */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950/20 p-3 rounded-2xl border border-slate-850/60 mt-2">
+              <div>
+                <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">📁 Categoria da Comunidade:</label>
+                <select
+                  value={categoryField}
+                  onChange={(e) => setCategoryField(e.target.value)}
+                  className="w-full text-xs border border-slate-800 px-3 py-2 bg-slate-950 text-slate-100 rounded-xl outline-none focus:border-indigo-505"
+                >
+                  <option value="Geral">Geral</option>
+                  <option value="Bloco">Bloco Gakkai</option>
+                  <option value="Distrito">Distrito Gakkai</option>
+                  <option value="Subdistrito">Subdistrito Gakkai</option>
+                  <option value="Área">Área Gakkai</option>
+                  <option value="Regional">Regional Gakkai</option>
+                  <option value="Outra">Outra Categoria</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">🔐 Critério de Entrada:</label>
+                <select
+                  value={joinCriteria}
+                  onChange={(e) => setJoinCriteria(e.target.value)}
+                  className="w-full text-xs border border-slate-800 px-3 py-2 bg-slate-950 text-slate-101 rounded-xl outline-none focus:border-indigo-505"
+                >
+                  <option value="invite_auto">Link de Convite (Entrada automática)</option>
+                  <option value="invite_approval">Link de Convite (Requer aprovação)</option>
+                  <option value="invite_nominal">Link de Convite (Apenas convidados nominais)</option>
+                  <option value="free">Livre (Acesso Direto)</option>
+                  <option value="approval">Aprovação Direta (Requer aval do Admin)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-950/20 p-3 rounded-2xl border border-slate-850/60 text-left">
+              <div className="col-span-2 sm:col-span-1">
+                <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">📍 Região Gakkai:</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Nordeste"
+                  value={regionField}
+                  onChange={(e) => setRegionField(e.target.value)}
+                  className="w-full text-xs border border-slate-800 px-3 py-2.5 bg-slate-950 text-slate-101 rounded-xl outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">🏙️ Cidade:</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Salvador"
+                  value={cityField}
+                  onChange={(e) => setCityField(e.target.value)}
+                  className="w-full text-xs border border-slate-800 px-3 py-2.5 bg-slate-950 text-slate-101 rounded-xl outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">📍 Estado:</label>
+                <input
+                  type="text"
+                  placeholder="Ex: BA"
+                  value={stateField}
+                  onChange={(e) => setStateField(e.target.value)}
+                  className="w-full text-xs border border-slate-800 px-3 py-2.5 bg-slate-950 text-slate-101 rounded-xl outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">🗣️ Idioma:</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Português"
+                  value={languageField}
+                  onChange={(e) => setLanguageField(e.target.value)}
+                  className="w-full text-xs border border-slate-800 px-3 py-2.5 bg-slate-950 text-slate-101 rounded-xl outline-none"
+                />
+              </div>
+            </div>
+
             {/* Custom Subgroups / Teams */}
             <div className="space-y-1 bg-slate-950/20 p-3 rounded-2xl border border-slate-850/60 text-left">
               <label className="text-[10px] uppercase font-black text-indigo-400 block font-heading">📍 Subgrupos ou Equipes da Comunidade:</label>
@@ -1100,28 +1525,19 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
               </span>
             </div>
 
-            {/* Capas disponíveis */}
+            {/* Campo para link de imagem de capa customizada */}
             <div className="space-y-1.5">
-              <label className="text-[10px] uppercase font-bold text-slate-400 block">🖼️ Imagem de Capa do Desafio:</label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {availableCovers.map((cov) => (
-                  <button
-                    key={cov.url}
-                    type="button"
-                    onClick={() => setCover(cov.url)}
-                    className={`relative h-14 rounded-lg overflow-hidden border-2 transition-all ${
-                      cover === cov.url || (!cover && cov.url === availableCovers[0].url)
-                        ? "border-amber-400 scale-102"
-                        : "border-transparent opacity-60"
-                    }`}
-                  >
-                    <img src={cov.url} alt={cov.name} className="w-full h-full object-cover bg-slate-950" />
-                    <span className="absolute bottom-0 inset-x-0 bg-black/50 text-[8px] text-slate-205 py-0.5 text-center truncate px-1">
-                      {cov.name}
-                    </span>
-                  </button>
-                ))}
-              </div>
+              <label className="text-[10px] uppercase font-bold text-slate-400 block">🖼️ Link da Imagem de Capa (Opcional):</label>
+              <input
+                type="text"
+                placeholder="Insira a URL de uma imagem de capa (ex: https://exemplo.com/foto.jpg)"
+                value={cover}
+                onChange={(e) => setCover(e.target.value)}
+                className="w-full text-xs border border-slate-800 px-3 py-2 bg-slate-950/70 text-slate-101 rounded-xl outline-none focus:border-indigo-500/60 transition"
+              />
+              <span className="text-[9px] text-slate-550 block leading-tight mt-0.5">
+                Cole o link de qualquer imagem para personalizar a capa da comunidade. Se deixado em branco, uma bela imagem abstrata padrão será utilizada.
+              </span>
             </div>
 
             <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
@@ -1230,7 +1646,7 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
                 </div>
 
                 <div>
-                  <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">🔒 Política de Privacidade:</label>
+                  <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">🌎 Nível de Privacidade:</label>
                   <select 
                     value={privacy}
                     onChange={(e) => setPrivacy(e.target.value as any)}
@@ -1239,6 +1655,80 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
                     <option value="public">Global Pública (Qualquer membro pode buscar e entrar)</option>
                     <option value="private">Missão Privada (Requer código de convite para acessar)</option>
                   </select>
+                </div>
+              </div>
+
+              {/* Advanced Metadata Edit */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950/20 p-3 rounded-2xl border border-slate-850/60">
+                <div>
+                  <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">📁 Categoria da Comunidade:</label>
+                  <select
+                    value={categoryField}
+                    onChange={(e) => setCategoryField(e.target.value)}
+                    className="w-full text-xs border border-slate-800 px-3 py-2 bg-slate-950 text-slate-100 rounded-xl outline-none focus:border-indigo-505"
+                  >
+                    <option value="Geral">Geral</option>
+                    <option value="Bloco">Bloco Gakkai</option>
+                    <option value="Distrito">Distrito Gakkai</option>
+                    <option value="Subdistrito">Subdistrito Gakkai</option>
+                    <option value="Área">Área Gakkai</option>
+                    <option value="Regional">Regional Gakkai</option>
+                    <option value="Outra">Outra Categoria</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">🔐 Critério de Entrada:</label>
+                  <select
+                    value={joinCriteria}
+                    onChange={(e) => setJoinCriteria(e.target.value)}
+                    className="w-full text-xs border border-slate-800 px-3 py-2 bg-slate-950 text-slate-101 rounded-xl outline-none focus:border-indigo-505"
+                  >
+                    <option value="invite_auto">Link de Convite (Entrada automática)</option>
+                    <option value="invite_approval">Link de Convite (Requer aprovação)</option>
+                    <option value="invite_nominal">Link de Convite (Apenas convidados nominais)</option>
+                    <option value="free">Livre (Acesso Direto)</option>
+                    <option value="approval">Aprovação Direta (Requer aval do Admin)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-950/20 p-3 rounded-2xl border border-slate-850/60 text-left">
+                <div>
+                  <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">📍 Região:</label>
+                  <input
+                    type="text"
+                    value={regionField}
+                    onChange={(e) => setRegionField(e.target.value)}
+                    className="w-full text-xs border border-slate-800 px-2 py-1.5 bg-slate-950 text-slate-101 rounded-lg outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">🏙️ Cidade:</label>
+                  <input
+                    type="text"
+                    value={cityField}
+                    onChange={(e) => setCityField(e.target.value)}
+                    className="w-full text-xs border border-slate-800 px-2 py-1.5 bg-slate-950 text-slate-101 rounded-lg outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">📍 Estado:</label>
+                  <input
+                    type="text"
+                    value={stateField}
+                    onChange={(e) => setStateField(e.target.value)}
+                    className="w-full text-xs border border-slate-800 px-2 py-1.5 bg-slate-950 text-slate-101 rounded-lg outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">🗣️ Idioma:</label>
+                  <input
+                    type="text"
+                    value={languageField}
+                    onChange={(e) => setLanguageField(e.target.value)}
+                    className="w-full text-xs border border-slate-800 px-2 py-1.5 bg-slate-950 text-slate-101 rounded-lg outline-none"
+                  />
                 </div>
               </div>
 
@@ -1358,28 +1848,19 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
                 </span>
               </div>
 
-              {/* Capas disponíveis */}
+              {/* Campo para link de imagem de capa customizada */}
               <div className="space-y-1.5">
-                <label className="text-[10px] uppercase font-bold text-slate-400 block">🖼️ Imagem de Capa do Desafio:</label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {availableCovers.map((cov) => (
-                    <button
-                      key={cov.url}
-                      type="button"
-                      onClick={() => setCover(cov.url)}
-                      className={`relative h-14 rounded-lg overflow-hidden border-2 transition-all ${
-                        cover === cov.url || (!cover && cov.url === availableCovers[0].url)
-                          ? "border-amber-400 scale-102"
-                          : "border-transparent opacity-60"
-                      }`}
-                    >
-                      <img src={cov.url} alt={cov.name} className="w-full h-full object-cover bg-slate-950" />
-                      <span className="absolute bottom-0 inset-x-0 bg-black/50 text-[8px] text-slate-205 py-0.5 text-center truncate px-1">
-                        {cov.name}
-                      </span>
-                    </button>
-                  ))}
-                </div>
+                <label className="text-[10px] uppercase font-bold text-slate-400 block">🖼️ Link da Imagem de Capa (Opcional):</label>
+                <input
+                  type="text"
+                  placeholder="Insira a URL de uma imagem de capa (ex: https://exemplo.com/foto.jpg)"
+                  value={cover}
+                  onChange={(e) => setCover(e.target.value)}
+                  className="w-full text-xs border border-slate-800 px-3 py-2 bg-slate-950/70 text-slate-101 rounded-xl outline-none focus:border-indigo-500/60 transition"
+                />
+                <span className="text-[9px] text-slate-550 block leading-tight mt-0.5">
+                  Cole o link de qualquer imagem para personalizar a capa da comunidade. Se deixado em branco, uma bela imagem abstrata padrão será utilizada.
+                </span>
               </div>
 
               <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
@@ -1579,7 +2060,7 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
               </div>
             ) : (
               <div className="bg-slate-900/20 border border-slate-800/40 p-5 rounded-2xl text-center text-slate-500 text-xs">
-                Nenhum desafio criado de sua autoria. Clique em "+ Criar Desafio" para moldar seus próprios objetivos!
+                Nenhuma comunidade criada de sua autoria. Clique em "+ Criar Comunidade" para iniciar seu próprio grupo!
               </div>
             )}
           </div>
@@ -1656,12 +2137,40 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
                 
-                <button
-                  onClick={() => setSelectedChallenge(null)}
-                  className="absolute top-4 left-4 bg-slate-950/90 hover:bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl text-slate-300 text-xs font-bold leading-none flex items-center gap-1.5 transition select-none"
-                >
-                  <ArrowLeft className="w-3.5 h-3.5" /> Voltar para Minha Comunidade
-                </button>
+                <div className="absolute top-4 left-4 flex items-center gap-2 flex-wrap z-10">
+                  <button
+                    onClick={() => setSelectedChallenge(null)}
+                    className="bg-slate-950/90 hover:bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl text-slate-300 text-xs font-bold leading-none flex items-center gap-1.5 transition select-none cursor-pointer"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" /> Voltar
+                  </button>
+
+                  {(() => {
+                    const joined = localCommunities.filter(c => c.participants?.includes(currentUser?.id || ""));
+                    if (joined.length > 1) {
+                      return (
+                        <select
+                          value={selectedChallenge.id}
+                          onChange={(e) => {
+                            const found = localCommunities.find(c => c.id === e.target.value);
+                            if (found) {
+                              setSelectedChallenge(found);
+                              setActiveTab("chat"); // reset to general tab
+                            }
+                          }}
+                          className="bg-slate-950/90 border border-slate-800 hover:border-slate-750 text-indigo-300 text-xs font-bold rounded-xl px-3.5 py-1.5 outline-none cursor-pointer focus:border-indigo-505 shadow-lg select-none"
+                        >
+                          {joined.map(c => (
+                            <option key={c.id} value={c.id}>
+                              🏢 Alternar: {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
 
                 <div className="absolute top-4 right-4 flex items-center gap-2">
                   <span className="bg-black/80 text-[9px] text-[#A7F3D0] font-black border border-slate-800 px-2.5 py-1 rounded-xl flex items-center gap-1 uppercase tracking-wider">
@@ -1688,15 +2197,15 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
 
                   <div className="flex flex-wrap gap-2 shrink-0 items-center bg-slate-950/90 p-2 rounded-xl border border-slate-850">
                     <div className="text-[10px] text-slate-450 font-mono px-1 flex items-center gap-1.5 border-r border-slate-800 mr-1.5 pr-2.5">
-                      <Key className="w-3.5 h-3.5 text-amber-500" />
-                      <span>CÓDIGO: <strong className="text-amber-400 font-extrabold select-all">{selectedChallenge.id.substr(0,8).toUpperCase()}</strong></span>
+                      <Key className="w-3.5 h-3.5 text-pink-500" />
+                      <span>CONVITE: <strong className="text-pink-400 font-extrabold select-all">{selectedChallenge.inviteToken || selectedChallenge.id}</strong></span>
                     </div>
 
                     {/* Copy Link Button */}
                     <button
                       type="button"
                       onClick={() => {
-                        const inviteLink = `${window.location.origin}?join=${selectedChallenge.id}`;
+                        const inviteLink = `${window.location.origin}/invite/${selectedChallenge.inviteToken || selectedChallenge.id}`;
                         navigator.clipboard.writeText(inviteLink);
                         setCopiedId("link");
                         setTimeout(() => setCopiedId(null), 2500);
@@ -1710,8 +2219,8 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
                         </>
                       ) : (
                         <>
-                          <Link className="w-3 h-3 text-indigo-400" />
-                          <span>Copiar Link</span>
+                          <Link className="w-3 h-3 text-pink-400" />
+                          <span>Copiar Link de Convite</span>
                         </>
                       )}
                     </button>
@@ -1747,6 +2256,14 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
                           setExercisePoints(selectedChallenge.exercisePoints !== undefined ? selectedChallenge.exercisePoints : 2);
                           setCover(selectedChallenge.cover || "");
                           setCustomSubgroupsInput(selectedChallenge.customSubgroups ? selectedChallenge.customSubgroups.join(", ") : "");
+                          setRegionField(selectedChallenge.region || "");
+                          setCityField(selectedChallenge.city || "");
+                          setStateField(selectedChallenge.state || "");
+                          setCountryField(selectedChallenge.country || "Brasil");
+                          setLanguageField(selectedChallenge.language || "Português");
+                          setCategoryField(selectedChallenge.category || "Geral");
+                          setJoinCriteria(selectedChallenge.joinCriteria || "free");
+                          setInviteCodeField(selectedChallenge.inviteCode || "");
                           setIsEditing(true);
                         }}
                         className="p-1 px-2.5 bg-indigo-950/40 border border-indigo-900/30 hover:border-indigo-800 hover:bg-indigo-900/50 text-indigo-300 text-[9px] font-bold rounded-lg flex items-center gap-1 transition-all cursor-pointer"
@@ -1764,13 +2281,22 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
                 {(() => {
                   const tabs = [
                     { id: "chat", icon: MessageSquare, label: "💬 Bate-papo" },
-                    { id: "feed", icon: Users, label: "👥 Feed Coletivo" },
-                    { id: "ranking", icon: Trophy, label: "🏆 Classificação" },
-                    { id: "dashboard", icon: BarChart, label: "📈 Estatísticas & Gráficos" },
-                    { id: "regras", icon: Shield, label: "📋 Regras Sincronizadas" }
+                    { id: "feed", icon: Users, label: "👥 Feed Social" },
+                    { id: "ranking", icon: Trophy, label: "🏆 Ranking" },
+                    { id: "constancy_hall", icon: Zap, label: "🏅 Hall da Constância" },
+                    { id: "mural_vitorias", icon: Award, label: "✨ Mural de Vitórias" },
+                    { id: "dashboard", icon: BarChart, label: "📈 Estatísticas" },
+                    { id: "avisos", icon: Bell, label: "📢 Avisos" },
+                    { id: "eventos", icon: Calendar, label: "📅 Eventos & Lives" },
+                    { id: "arquivos", icon: BookOpen, label: "📚 Biblioteca & Arquivos" },
+                    { id: "ia_coach", icon: Sparkles, label: "🤖 IA da Comunidade" },
+                    { id: "regras", icon: Shield, label: "📋 Regras" }
                   ];
                   if (selectedChallenge.customSubgroups && selectedChallenge.customSubgroups.length > 0) {
                     tabs.splice(4, 0, { id: "subgroups", icon: MapPin, label: "📍 Mapa / Equipes" });
+                  }
+                  if (isCreator) {
+                    tabs.push({ id: "admin", icon: Settings, label: "⚙️ Painel Admin" });
                   }
                   return tabs.map(tab => (
                     <button
@@ -2028,52 +2554,23 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
                 <div className="space-y-4">
                   <div className="border-b border-slate-850 pb-2 mb-2 text-left">
                     <h3 className="text-xs font-extrabold uppercase text-slate-350 tracking-wider font-heading">Feed Exclusivo do Desafio</h3>
-                    <p className="text-[11px] text-slate-500">Mostra apenas o feed de postagens e conquistas dos participantes deste desafio.</p>
+                    <p className="text-[11px] text-slate-500">Compartilhe suas conquistas, fotos, vídeos, sentimentos e treinos exclusivamente com esta comunidade.</p>
                   </div>
 
-                  <div className="space-y-4">
-                    {feedLoading ? (
-                      <p className="text-xs text-slate-400">Sincronizando feed do desafio...</p>
-                    ) : communityFeed.length === 0 ? (
-                      <p className="text-xs text-slate-500">Nenhuma postagem realizada por membros deste desafio ainda.</p>
-                    ) : (
-                      communityFeed.map((post: any) => {
-                        const postUser = users?.find(u => u.id === post.userId);
-                        const finalPostUserName = postUser ? (postUser.displayName || postUser.name) : post.userName;
-                        const finalPostUserAvatar = postUser ? postUser.avatar : post.userAvatar;
-                        return (
-                          <div key={post.id} className="p-4 bg-slate-950/45 rounded-2xl border border-slate-850 flex gap-3 text-xs leading-relaxed font-sans">
-                            <img 
-                              src={finalPostUserAvatar} 
-                              alt={finalPostUserName} 
-                              className="w-10 h-10 rounded-full border border-slate-800 shrink-0 object-cover bg-slate-900"
-                            />
-                            <div className="space-y-1.5 flex-1 text-left">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <span className="font-extrabold text-slate-100 block">{finalPostUserName}</span>
-                                  <span className="text-[9px] text-slate-550 leading-none">{post.userDivision || post.division} • {post.userRegion || post.region}</span>
-                                </div>
-                                <span className="bg-amber-500/15 border border-amber-500/20 text-amber-300 text-[9px] font-extrabold py-0.5 px-2 rounded-lg">
-                                  🏆 +{post.points} pontos
-                                </span>
-                              </div>
-                              
-                              <p className="text-slate-300 text-xs py-1 leading-normal">
-                                {post.content}
-                              </p>
-
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="bg-indigo-950/40 text-indigo-300 border border-indigo-900/30 text-[9px] px-2 py-0.5 rounded-lg font-mono">
-                                  ✓ {post.category}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
+                  <SocialFeed
+                    posts={posts}
+                    currentUser={currentUser}
+                    allUsers={users}
+                    communities={communities}
+                    onComment={onComment || (() => {})}
+                    onReact={onReact || (() => {})}
+                    onNewPost={onNewPost || (() => {})}
+                    onSubmitCombined={onSubmitCombined || (async () => ({ success: false, error: "Não implementado" }))}
+                    onSelectUser={() => {}}
+                    onPostCreated={() => {}}
+                    firebaseAuth={firebaseAuth}
+                    communityId={selectedChallenge.id}
+                  />
                 </div>
               )}
 
@@ -2371,6 +2868,956 @@ export default function CommunitiesPanel({ currentUser, communities, onAddCommun
                       {challengeStats.points} pts
                     </span>
                   </div>
+                </div>
+              )}
+
+              {/* 📢 NOTICES TAB */}
+              {activeTab === "avisos" && (
+                <div className="space-y-6">
+                  <div className="border-b border-slate-850 pb-2 mb-4 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-450 uppercase tracking-widest block font-heading">Mural de Avisos da Comunidade</h3>
+                      <p className="text-[11px] text-slate-500">Mantenha-se informado sobre as metas, campanhas e estudos do seu bloco.</p>
+                    </div>
+                  </div>
+
+                  {noticesLoading ? (
+                    <div className="text-center py-8 text-xs text-slate-500">Carregando avisos...</div>
+                  ) : communityNotices.length === 0 ? (
+                    <div className="bg-slate-900/20 border border-slate-800/40 p-8 rounded-2xl text-center text-slate-500">
+                      <Bell className="w-8 h-8 text-slate-700 mx-auto mb-2 animate-bounce" />
+                      <p className="text-xs">Nenhum aviso publicado até o momento.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {communityNotices.map((notice) => (
+                        <div
+                          key={notice.id}
+                          className="p-5 bg-slate-950/40 border border-slate-850 rounded-2xl space-y-3 relative overflow-hidden text-left"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[8px] font-black uppercase bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 py-0.5 px-2 rounded-full font-mono">
+                              {notice.type === "campaign" ? "🔥 Campanha" : notice.type === "study" ? "📖 Estudo" : "📢 Comunicado"}
+                            </span>
+                            <span className="text-[9px] text-slate-500 font-mono">
+                              {new Date(notice.createdAt || Date.now()).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <h4 className="text-xs font-bold text-slate-200">{notice.title}</h4>
+                          <p className="text-[11px] text-slate-455 leading-relaxed">{notice.description}</p>
+                          {currentUser && selectedChallenge.creatorId === currentUser.id && (
+                            <button
+                              onClick={() => handleDeleteCommunityNotice(notice.id)}
+                              className="text-[10px] text-rose-450 hover:text-rose-400 flex items-center gap-1 font-bold pt-1.5 cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" /> Remover Aviso
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 📅 EVENTS & LIVES TAB */}
+              {activeTab === "eventos" && (
+                <div className="space-y-6">
+                  <div className="border-b border-slate-850 pb-2 mb-4">
+                    <h3 className="text-xs font-bold text-slate-450 uppercase tracking-widest block font-heading">Calendário de Atividades & Lives</h3>
+                    <p className="text-[11px] text-slate-500">Acompanhe reuniões de bloco, treinos coletivos e transmissões virtuais.</p>
+                  </div>
+
+                  {/* Bodhi Lives Section */}
+                  <div className="space-y-4">
+                    <h4 className="text-xs font-black uppercase text-indigo-400 flex items-center gap-1.5">
+                      <Play className="w-4 h-4 text-indigo-400 animate-pulse" />
+                      Bodhi Lives Ativas ou Gravadas
+                    </h4>
+                    
+                    {communityLives.length === 0 ? (
+                      <div className="bg-slate-900/10 border border-slate-850/60 p-5 rounded-2xl text-center text-slate-500 text-xs">
+                        Nenhuma transmissão ao vivo ativa.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {communityLives.map((live) => (
+                          <div key={live.id} className="bg-slate-950/60 border border-slate-850 rounded-2xl overflow-hidden shadow">
+                            <div className="h-40 bg-slate-900 flex items-center justify-center relative">
+                              <img src={selectedChallenge.cover} className="w-full h-full object-cover opacity-30" />
+                              <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-2">
+                                <Play className="w-10 h-10 text-indigo-400 bg-indigo-500/10 p-2.5 rounded-full border border-indigo-500/20 shadow animate-bounce" />
+                                <span className="text-[9px] uppercase font-bold bg-rose-600 text-white px-2 py-0.5 rounded-full tracking-wider animate-pulse">AO VIVO / GRAVADA</span>
+                              </div>
+                            </div>
+                            <div className="p-4 space-y-1 text-left">
+                              <h5 className="text-xs font-bold text-slate-101">{live.title}</h5>
+                              <p className="text-[10px] text-slate-400 line-clamp-2">{live.description}</p>
+                              <a 
+                                href={live.videoUrl} 
+                                target="_blank" 
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 font-extrabold mt-2 cursor-pointer"
+                              >
+                                Assistir no YouTube <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Upcoming Events Section */}
+                  <div className="space-y-4 pt-4 border-t border-slate-850/60">
+                    <h4 className="text-xs font-black uppercase text-amber-400 flex items-center gap-1.5">
+                      <Calendar className="w-4 h-4 text-amber-500" />
+                      Calendário de Atividades do Grupo
+                    </h4>
+
+                    {communityEvents.length === 0 ? (
+                      <div className="bg-slate-900/10 border border-slate-850/60 p-6 rounded-2xl text-center text-slate-500 text-xs">
+                        Nenhum evento agendado para esta campanha.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {communityEvents.map((evt) => (
+                          <div
+                            key={evt.id}
+                            className="p-4 bg-slate-950/40 border border-slate-850 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-left"
+                          >
+                            <div className="space-y-1.5">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[8px] font-bold uppercase bg-amber-500/10 text-amber-400 border border-amber-500/20 py-0.5 px-2 rounded-lg font-mono">
+                                  {evt.category?.toUpperCase() || "EVENTO"}
+                                </span>
+                                <span className="text-[10px] text-slate-450 font-mono font-bold">
+                                  📅 {new Date(evt.date).toLocaleDateString()}
+                                </span>
+                              </div>
+                              <h5 className="text-xs font-extrabold text-slate-101">{evt.title}</h5>
+                              <p className="text-[11px] text-slate-400">{evt.description}</p>
+                              {currentUser && selectedChallenge.creatorId === currentUser.id && (
+                                <button
+                                  onClick={() => handleDeleteCommunityEvent(evt.id)}
+                                  className="text-[10px] text-rose-450 hover:text-rose-400 font-bold flex items-center gap-1 mt-1.5 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" /> Excluir Evento
+                                </button>
+                              )}
+                            </div>
+                            <div className="text-left sm:text-right shrink-0">
+                              <span className="text-[9px] text-slate-500 block uppercase">Localização / Link:</span>
+                              <span className="text-[11px] text-indigo-300 font-semibold">{evt.location}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 📚 SHARED FILES / LIBRARY TAB */}
+              {activeTab === "arquivos" && (
+                <div className="space-y-6">
+                  <div className="border-b border-slate-850 pb-2 mb-4">
+                    <h3 className="text-xs font-bold text-slate-450 uppercase tracking-widest block font-heading">Biblioteca Compartilhada</h3>
+                    <p className="text-[11px] text-slate-500">Estudos, diretrizes, roteiros de daimoku e PDFs de apoio enviados pelos líderes.</p>
+                  </div>
+
+                  {communityFiles.length === 0 ? (
+                    <div className="bg-slate-900/20 border border-slate-850/60 p-8 rounded-2xl text-center text-slate-500">
+                      <BookOpen className="w-8 h-8 text-slate-700 mx-auto mb-2" />
+                      <p className="text-xs">Nenhum arquivo ou documento compartilhado na biblioteca.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {communityFiles.map((file) => (
+                        <div
+                          key={file.id}
+                          className="p-4 bg-slate-950/40 border border-slate-850 rounded-2xl flex items-center justify-between gap-4 text-left"
+                        >
+                          <div className="flex items-center gap-3 overflow-hidden">
+                            <div className="w-10 h-10 rounded-xl bg-indigo-950/50 border border-indigo-900/20 flex items-center justify-center shrink-0">
+                              <FileText className="w-5 h-5 text-indigo-400" />
+                            </div>
+                            <div className="overflow-hidden">
+                              <div className="flex items-center gap-1.5">
+                                <h5 className="text-xs font-bold text-slate-101 truncate">{file.name}</h5>
+                                <span className="bg-slate-900 text-slate-450 text-[7px] font-mono font-bold px-1 py-0.2 rounded border border-slate-800">
+                                  {file.category?.toUpperCase() || "ESTUDO"}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-450 truncate mt-0.5">{file.description}</p>
+                              {currentUser && selectedChallenge.creatorId === currentUser.id && (
+                                <button
+                                  onClick={() => handleDeleteCommunityFile(file.id)}
+                                  className="text-[10px] text-rose-400 hover:text-rose-350 font-bold flex items-center gap-1 mt-1 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" /> Remover
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          <a
+                            href={file.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="p-2 bg-indigo-600/10 hover:bg-indigo-600 hover:text-white border border-indigo-500/20 text-indigo-300 text-[10px] font-bold rounded-xl transition flex items-center gap-1 shrink-0 cursor-pointer"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Baixar</span>
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 🤖 COACH IA CHAT TAB */}
+              {activeTab === "ia_coach" && (
+                <div className="space-y-6">
+                  <div className="border-b border-slate-850 pb-2 mb-4">
+                    <h3 className="text-xs font-bold text-slate-450 uppercase tracking-widest block font-heading">Conversar com o Coach IA da Comunidade</h3>
+                    <p className="text-[11px] text-slate-500">Esclareça dúvidas sobre os objetivos da campanha, receba incentivos baseados no Budismo Soka ou monte planos de treinos personalizados.</p>
+                  </div>
+
+                  <div className="bg-slate-950/60 border border-slate-850/80 rounded-2xl overflow-hidden shadow flex flex-col h-[400px]">
+                    {/* Conversations area */}
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
+                      {iaHistory.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-2 text-slate-500">
+                          <Sparkles className="w-8 h-8 text-indigo-400 animate-pulse" />
+                          <h4 className="text-xs font-bold text-slate-350 uppercase tracking-wider">Seu Orientador Pessoal de Campanha</h4>
+                          <p className="text-[10px] leading-relaxed max-w-sm">Pergunte, por exemplo: "Como posso atingir 300 minutos de Daimoku neste mês?" ou "Me dê uma frase de incentivo de Daisaku Ikeda para hoje!"</p>
+                        </div>
+                      ) : (
+                        iaHistory.map((msg, idx) => (
+                          <div
+                            key={idx}
+                            className={`flex gap-2.5 max-w-[85%] text-left ${msg.role === "user" ? "ml-auto flex-row-reverse" : "mr-auto"}`}
+                          >
+                            <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 font-bold text-[10px] ${
+                              msg.role === "user" ? "bg-indigo-650 text-white" : "bg-emerald-900/30 text-emerald-400 border border-emerald-900/40"
+                            }`}>
+                              {msg.role === "user" ? "U" : "AI"}
+                            </div>
+                            <div className={`p-3 rounded-2xl text-[11px] leading-relaxed ${
+                              msg.role === "user" ? "bg-indigo-650 text-white rounded-tr-none" : "bg-slate-900 border border-slate-800 text-slate-205 rounded-tl-none"
+                            }`}>
+                              {msg.content}
+                            </div>
+                          </div>
+                        ))
+                      )}
+
+                      {iaLoading && (
+                        <div className="flex gap-2.5 mr-auto max-w-[80%] text-left animate-pulse">
+                          <div className="w-7 h-7 rounded-lg bg-emerald-950 flex items-center justify-center text-[10px] font-bold text-emerald-400 border border-emerald-900/20">AI</div>
+                          <div className="p-3 bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-none text-[11px] text-slate-400 flex items-center gap-1.5 font-mono">
+                            O Coach está refletindo sobre sua orientação...
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Compose area */}
+                    <form onSubmit={handleSendIaMessage} className="p-3 bg-slate-950/80 border-t border-slate-850 flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Digite sua dúvida ou pedido de orientação ao Coach..."
+                        value={iaMessage}
+                        onChange={(e) => setIaMessage(e.target.value)}
+                        disabled={iaLoading}
+                        className="flex-1 bg-slate-900 border border-slate-800 px-3.5 py-2 rounded-xl text-xs text-slate-101 outline-none focus:border-indigo-505"
+                      />
+                      <button
+                        type="submit"
+                        disabled={iaLoading || !iaMessage.trim()}
+                        className="px-4 py-2 bg-indigo-650 hover:bg-indigo-600 text-white text-xs font-bold rounded-xl transition flex items-center gap-1 cursor-pointer disabled:opacity-40"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Enviar</span>
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* ⚙️ LEADERS ADMINISTRATIVE PANEL TAB */}
+              {activeTab === "admin" && isCreator && (
+                <div className="space-y-6">
+                  <div className="border-b border-slate-850 pb-2 mb-4 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-450 uppercase tracking-widest block font-heading">Painel de Liderança & Administração</h3>
+                      <p className="text-[11px] text-slate-500">Configure metas, gerencie cargos, adicione avisos, eventos, arquivos e controle a comunidade.</p>
+                    </div>
+                    {adminMsg && (
+                      <span className="text-[10px] bg-emerald-950/30 text-emerald-400 border border-emerald-900/40 px-3 py-1 rounded-xl font-bold animate-pulse">
+                        ✓ {adminMsg}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Left Column: Post Forms */}
+                    <div className="lg:col-span-2 space-y-5">
+                      {/* Form: Post Notice */}
+                      <form onSubmit={handleAddCommunityNotice} className="bg-slate-950/40 border border-slate-850 p-4.5 rounded-2xl text-left space-y-3.5">
+                        <h4 className="text-xs font-bold text-slate-201 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-850 pb-2">
+                          <Bell className="w-4 h-4 text-indigo-400" />
+                          Fixar Novo Aviso no Mural
+                        </h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">Título do Aviso:</label>
+                            <input
+                              type="text"
+                              value={noticeTitle}
+                              onChange={(e) => setNoticeTitle(e.target.value)}
+                              required
+                              placeholder="Ex: Novo Lema de Julho!"
+                              className="w-full text-xs border border-slate-800 bg-slate-900 text-slate-100 px-3 py-2 rounded-xl outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">Categoria:</label>
+                            <select
+                              value={noticeType}
+                              onChange={(e) => setNoticeType(e.target.value as any)}
+                              className="w-full text-xs border border-slate-800 bg-slate-900 text-slate-101 px-3 py-2 rounded-xl outline-none focus:border-indigo-505"
+                            >
+                              <option value="announcement">📢 Comunicado Comum</option>
+                              <option value="campaign">🔥 Campanha do Bloco</option>
+                              <option value="study">📖 Estudo Mensal</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">Conteúdo do Aviso:</label>
+                          <textarea
+                            value={noticeDesc}
+                            onChange={(e) => setNoticeDesc(e.target.value)}
+                            required
+                            placeholder="Descreva o aviso em detalhes para inspirar a comunidade..."
+                            className="w-full h-16 text-xs border border-slate-800 bg-slate-900 text-slate-100 p-3 rounded-xl outline-none resize-none focus:border-indigo-505"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          className="px-4 py-2 bg-indigo-650 hover:bg-indigo-600 text-white font-bold text-xs rounded-xl shadow transition cursor-pointer"
+                        >
+                          Publicar Aviso ➔
+                        </button>
+                      </form>
+
+                      {/* Form: Add Event */}
+                      <form onSubmit={handleAddCommunityEvent} className="bg-slate-950/40 border border-slate-850 p-4.5 rounded-2xl text-left space-y-3.5">
+                        <h4 className="text-xs font-bold text-slate-201 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-850 pb-2">
+                          <Calendar className="w-4 h-4 text-amber-500" />
+                          Agendar Nova Atividade / Evento
+                        </h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">Título da Atividade:</label>
+                            <input
+                              type="text"
+                              value={evtTitle}
+                              onChange={(e) => setEvtTitle(e.target.value)}
+                              required
+                              placeholder="Ex: Treino em Grupo ou Reunião"
+                              className="w-full text-xs border border-slate-800 bg-slate-900 text-slate-101 px-3 py-2 rounded-xl outline-none focus:border-indigo-505"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">Data:</label>
+                            <input
+                              type="date"
+                              value={evtDate}
+                              onChange={(e) => setEvtDate(e.target.value)}
+                              required
+                              className="w-full text-xs border border-slate-800 bg-slate-900 text-slate-101 px-3 py-1.5 rounded-xl outline-none"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">Local / Link Virtual:</label>
+                            <input
+                              type="text"
+                              value={evtLocation}
+                              onChange={(e) => setEvtLocation(e.target.value)}
+                              placeholder="Ex: Auditório ou Link Zoom"
+                              className="w-full text-xs border border-slate-800 bg-slate-900 text-slate-101 px-3 py-2 rounded-xl outline-none focus:border-indigo-505"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">Categoria:</label>
+                            <select
+                              value={evtCategory}
+                              onChange={(e) => setEvtCategory(e.target.value)}
+                              className="w-full text-xs border border-slate-800 bg-slate-900 text-slate-101 px-3 py-2 rounded-xl outline-none focus:border-indigo-505"
+                            >
+                              <option value="reuniao">👥 Reunião / Estudo</option>
+                              <option value="treino">💪 Treino / Exercício Coletivo</option>
+                              <option value="campanha">🎯 Mobilização Geral</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">Breve Descrição do Evento:</label>
+                          <input
+                            type="text"
+                            value={evtDesc}
+                            onChange={(e) => setEvtDesc(e.target.value)}
+                            placeholder="Ex: Levar determinação escrita e roupas leves."
+                            className="w-full text-xs border border-slate-800 bg-slate-900 text-slate-101 px-3 py-2 rounded-xl outline-none focus:border-indigo-505"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          className="px-4 py-2 bg-amber-600 hover:bg-amber-550 text-white font-bold text-xs rounded-xl shadow transition cursor-pointer"
+                        >
+                          Criar Evento 📅
+                        </button>
+                      </form>
+
+                      {/* Form: Add Library File */}
+                      <form onSubmit={handleAddCommunityFile} className="bg-slate-950/40 border border-slate-850 p-4.5 rounded-2xl text-left space-y-3.5">
+                        <h4 className="text-xs font-bold text-slate-201 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-850 pb-2">
+                          <BookOpen className="w-4 h-4 text-emerald-400" />
+                          Enviar Arquivo para a Biblioteca
+                        </h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">Nome do Documento:</label>
+                            <input
+                              type="text"
+                              value={fileName}
+                              onChange={(e) => setFileName(e.target.value)}
+                              required
+                              placeholder="Ex: Manual de Gongyo PDF"
+                              className="w-full text-xs border border-slate-800 bg-slate-900 text-slate-101 px-3 py-2 rounded-xl outline-none focus:border-indigo-505"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">Categoria do Arquivo:</label>
+                            <select
+                              value={fileCat}
+                              onChange={(e) => setFileCat(e.target.value)}
+                              className="w-full text-xs border border-slate-800 bg-slate-900 text-slate-101 px-3 py-2 rounded-xl outline-none focus:border-indigo-505"
+                            >
+                              <option value="estudo">📖 Material de Estudo</option>
+                              <option value="treino">🏋️ Plano de Treino</option>
+                              <option value="incentivo">❤️ Carta de Incentivo</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">URL de Acesso/Download:</label>
+                            <input
+                              type="text"
+                              value={fileUrl}
+                              onChange={(e) => setFileUrl(e.target.value)}
+                              required
+                              placeholder="Ex: https://link-para-pdf.com/arquivo.pdf"
+                              className="w-full text-xs border border-slate-800 bg-slate-900 text-slate-101 px-3 py-2.5 rounded-xl outline-none focus:border-indigo-505"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">Breve Descrição:</label>
+                            <input
+                              type="text"
+                              value={fileDesc}
+                              onChange={(e) => setFileDesc(e.target.value)}
+                              placeholder="Ex: Contém as orientações completas para novatos."
+                              className="w-full text-xs border border-slate-800 bg-slate-900 text-slate-101 px-3 py-2.5 rounded-xl outline-none focus:border-indigo-505"
+                            />
+                          </div>
+                        </div>
+                        <button
+                          type="submit"
+                          className="px-4 py-2 bg-indigo-650 hover:bg-indigo-600 text-white font-bold text-xs rounded-xl shadow transition cursor-pointer"
+                        >
+                          Disponibilizar Arquivo ➔
+                        </button>
+                      </form>
+                    </div>
+
+                    {/* Right Column: Member Management */}
+                    <div className="space-y-5">
+                      <div className="bg-slate-950/40 border border-slate-850 p-4.5 rounded-2xl text-left space-y-4">
+                        <h4 className="text-xs font-bold text-slate-201 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-850 pb-2">
+                          <Users className="w-4 h-4 text-sky-400" />
+                          Membros Ativos ({(() => {
+                            const aligned = users.filter(u => selectedChallenge.participants?.includes(u.id));
+                            return aligned.length;
+                          })()})
+                        </h4>
+
+                        <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
+                          {users
+                            .filter(u => selectedChallenge.participants?.includes(u.id))
+                            .map(u => {
+                              const role = selectedChallenge.roles?.[u.id] || "Membro";
+                              return (
+                                <div key={u.id} className="p-3 bg-slate-900 border border-slate-850/60 rounded-xl space-y-2 flex flex-col justify-between">
+                                  <div className="flex items-center gap-2 overflow-hidden">
+                                    <div className="w-7 h-7 rounded-lg overflow-hidden shrink-0">
+                                      <img src={u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80"} className="w-full h-full object-cover" />
+                                    </div>
+                                    <div className="overflow-hidden">
+                                      <h5 className="text-[11px] font-bold text-slate-101 truncate">{u.name}</h5>
+                                      <span className="text-[9px] uppercase font-bold text-amber-400 font-mono">
+                                        💼 {role}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* Change cargo / Kick action */}
+                                  {u.id !== selectedChallenge.creatorId && (
+                                    <div className="flex items-center gap-1.5 justify-between pt-1 border-t border-slate-850/40">
+                                      <select
+                                        value={role}
+                                        onChange={(e) => handleAssignMemberRole(u.id, e.target.value)}
+                                        className="text-[10px] bg-slate-950 text-slate-300 font-bold border border-slate-800 rounded px-1.5 py-0.5 outline-none cursor-pointer"
+                                      >
+                                        <option value="Membro">Membro</option>
+                                        <option value="Administrador">Administrador</option>
+                                        <option value="Responsável pelos Eventos">Responsável Eventos</option>
+                                        <option value="Moderador">Moderador</option>
+                                      </select>
+
+                                      <button
+                                        onClick={() => handleKickMember(u.id)}
+                                        className="text-[9px] text-rose-455 hover:text-rose-400 font-bold flex items-center gap-0.5 cursor-pointer"
+                                      >
+                                        <UserX className="w-3.5 h-3.5" /> Remover
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                        </div>
+                      </div>
+
+                      {/* Pending Approvals (for joinCriteria === approval) */}
+                      {selectedChallenge.joinCriteria === "approval" && (
+                        <div className="bg-slate-950/40 border border-slate-850 p-4.5 rounded-2xl text-left space-y-4">
+                          <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-850 pb-2">
+                            <Lock className="w-4 h-4 text-amber-500 animate-pulse" />
+                            Aprovações Pendentes
+                          </h4>
+
+                          {(() => {
+                            const pendingUsers = users.filter(u => selectedChallenge.pendingRequests?.includes(u.id));
+                            if (pendingUsers.length === 0) {
+                              return <p className="text-[10px] text-slate-500 text-center">Nenhuma solicitação pendente.</p>;
+                            }
+                            return (
+                              <div className="space-y-3">
+                                {pendingUsers.map(u => (
+                                  <div key={u.id} className="p-3 bg-slate-900 border border-slate-850 rounded-xl flex items-center justify-between gap-2 text-xs">
+                                    <span className="font-bold text-slate-200 truncate">{u.name}</span>
+                                    <div className="flex gap-1 shrink-0">
+                                      <button
+                                        onClick={async () => {
+                                          const res = await fetch(`/api/communities/${selectedChallenge.id}/approve`, {
+                                            method: "POST",
+                                            headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ userId: currentUser?.id, targetUserId: u.id })
+                                          });
+                                          if (res.ok) {
+                                            const data = await res.json();
+                                            if (data.success && data.community) {
+                                              setSelectedChallenge(data.community);
+                                              setAdminMsg("Membro aprovado!");
+                                              setTimeout(() => setAdminMsg(""), 3000);
+                                            }
+                                          }
+                                        }}
+                                        className="p-1 bg-emerald-650 hover:bg-emerald-600 text-white rounded font-bold text-[9px] flex items-center gap-0.5 cursor-pointer"
+                                      >
+                                        <UserCheck className="w-3.5 h-3.5" /> Sim
+                                      </button>
+                                      <button
+                                        onClick={async () => {
+                                          const res = await fetch(`/api/communities/${selectedChallenge.id}/reject`, {
+                                            method: "POST",
+                                            headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ userId: currentUser?.id, targetUserId: u.id })
+                                          });
+                                          if (res.ok) {
+                                            const data = await res.json();
+                                            if (data.success && data.community) {
+                                              setSelectedChallenge(data.community);
+                                              setAdminMsg("Membro rejeitado!");
+                                              setTimeout(() => setAdminMsg(""), 3000);
+                                            }
+                                          }
+                                        }}
+                                        className="p-1 bg-slate-800 hover:bg-slate-750 text-slate-350 rounded font-bold text-[9px] cursor-pointer"
+                                      >
+                                        Não
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+
+                      {/* GESTÃO DE CONVITES & LINKS */}
+                      <div className="bg-slate-950/40 border border-slate-850 p-4.5 rounded-2xl text-left space-y-4">
+                        <h4 className="text-xs font-bold text-slate-201 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-850 pb-2">
+                          <Link className="w-4 h-4 text-pink-400" />
+                          Gestão de Links & Convites
+                        </h4>
+
+                        {/* Invite Link display & Sharing */}
+                        <div className="p-3 bg-slate-900 border border-slate-850 rounded-xl space-y-3">
+                          <span className="text-[10px] text-slate-400 font-extrabold uppercase font-mono tracking-wider block">
+                            🔗 Link de Convite Ativo
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              readOnly
+                              value={`${window.location.origin}/invite/${selectedChallenge.inviteToken || selectedChallenge.id}`}
+                              className="flex-1 text-[11px] bg-slate-950 text-pink-400 font-mono p-2 rounded-lg border border-slate-850 outline-none select-all font-bold"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const link = `${window.location.origin}/invite/${selectedChallenge.inviteToken || selectedChallenge.id}`;
+                                navigator.clipboard.writeText(link);
+                                setCopiedId("admin-link");
+                                setTimeout(() => setCopiedId(null), 2000);
+                              }}
+                              className="p-2 bg-pink-950/20 border border-pink-900/30 rounded-lg hover:bg-pink-900/45 transition text-pink-400"
+                              title="Copiar Link"
+                            >
+                              {copiedId === "admin-link" ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                            </button>
+                          </div>
+
+                          {/* Action Sharing Buttons */}
+                          <div className="grid grid-cols-3 gap-2">
+                            <a
+                              href={`https://api.whatsapp.com/send?text=${encodeURIComponent("Participe da nossa comunidade " + selectedChallenge.name + " no BodhiShape! Entre pelo link de convite oficial: " + `${window.location.origin}/invite/${selectedChallenge.inviteToken || selectedChallenge.id}`)}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="p-2 bg-emerald-950/20 border border-emerald-900/30 text-emerald-400 rounded-lg flex flex-col items-center justify-center gap-1 hover:bg-emerald-900/10 transition text-center"
+                            >
+                              <span className="text-sm">💬</span>
+                              <span className="text-[8px] font-bold uppercase tracking-wider">WhatsApp</span>
+                            </a>
+
+                            <a
+                              href={`mailto:?subject=${encodeURIComponent("Convite para a comunidade " + selectedChallenge.name)}&body=${encodeURIComponent("Olá!\n\nGostaria de te convidar a participar da nossa comunidade '" + selectedChallenge.name + "' no BodhiShape.\n\nAcesse o link oficial de convite abaixo para se juntar a nós:\n" + `${window.location.origin}/invite/${selectedChallenge.inviteToken || selectedChallenge.id}` + "\n\nTe espero lá!")}`}
+                              className="p-2 bg-indigo-950/20 border border-indigo-900/30 text-indigo-400 rounded-lg flex flex-col items-center justify-center gap-1 hover:bg-indigo-905/10 transition text-center"
+                            >
+                              <span className="text-sm">✉️</span>
+                              <span className="text-[8px] font-bold uppercase tracking-wider">E-mail</span>
+                            </a>
+
+                            <button
+                              type="button"
+                              onClick={() => setShowQrModalFor(selectedChallenge)}
+                              className="p-2 bg-purple-950/20 border border-purple-900/30 text-purple-400 rounded-lg flex flex-col items-center justify-center gap-1 hover:bg-purple-900/10 transition text-center"
+                            >
+                              <QrCode className="w-4 h-4 text-purple-400 mx-auto" />
+                              <span className="text-[8px] font-bold uppercase tracking-wider">QR Code</span>
+                            </button>
+                          </div>
+
+                          {/* Revoke current link button */}
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!window.confirm("Aviso de Segurança: Tem certeza de que deseja revogar o link de convite atual? O link antigo deixará de funcionar imediatamente e um novo será gerado para garantir a segurança.")) return;
+                              try {
+                                const authHeaders: Record<string, string> = { "Content-Type": "application/json" };
+                                if (firebaseAuth?.currentUser) {
+                                  const tokenVal = await firebaseAuth.currentUser.getIdToken();
+                                  authHeaders["Authorization"] = `Bearer ${tokenVal}`;
+                                }
+                                const res = await fetch(`/api/communities/${selectedChallenge.id}/revoke-invite`, {
+                                  method: "POST",
+                                  headers: authHeaders,
+                                  body: JSON.stringify({ userId: currentUser?.id })
+                                });
+                                if (res.ok) {
+                                  const data = await res.json();
+                                  if (data.success) {
+                                    setSelectedChallenge(data.community);
+                                    setLocalCommunities(prev => prev.map(c => c.id === selectedChallenge.id ? data.community : c));
+                                    setAdminMsg("Link antigo revogado e novo gerado!");
+                                    setTimeout(() => setAdminMsg(""), 3500);
+                                  }
+                                }
+                              } catch (err) {
+                                console.error(err);
+                              }
+                            }}
+                            className="w-full py-2 bg-red-955/30 border border-red-900/40 text-red-405 font-extrabold hover:bg-red-900/25 text-[10px] uppercase rounded-xl transition flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            🔄 Revogar & Gerar Novo Link
+                          </button>
+                        </div>
+
+                        {/* Privacy / Criteria configuration selection */}
+                        <div className="space-y-2 text-left">
+                          <label className="text-[9px] uppercase font-bold text-slate-450 block">🔒 Configurações do Link:</label>
+                          <select
+                            value={selectedChallenge.joinCriteria || "invite_auto"}
+                            onChange={async (e) => {
+                              const criteria = e.target.value;
+                              try {
+                                const authHeaders: Record<string, string> = { "Content-Type": "application/json" };
+                                if (firebaseAuth?.currentUser) {
+                                  const tokenVal = await firebaseAuth.currentUser.getIdToken();
+                                  authHeaders["Authorization"] = `Bearer ${tokenVal}`;
+                                }
+                                const res = await fetch(`/api/communities/${selectedChallenge.id}/update`, {
+                                  method: "POST",
+                                  headers: authHeaders,
+                                  body: JSON.stringify({ userId: currentUser?.id, joinCriteria: criteria })
+                                });
+                                if (res.ok) {
+                                  const updated = await res.json();
+                                  setSelectedChallenge(updated);
+                                  setLocalCommunities(prev => prev.map(c => c.id === selectedChallenge.id ? updated : c));
+                                  setAdminMsg("Critério atualizado com sucesso!");
+                                  setTimeout(() => setAdminMsg(""), 3000);
+                                }
+                              } catch (err) {
+                                console.error(err);
+                              }
+                            }}
+                            className="w-full text-xs border border-slate-800 bg-slate-900 text-slate-101 px-3 py-2 rounded-xl outline-none focus:border-indigo-505 cursor-pointer"
+                          >
+                            <option value="invite_auto">Qualquer pessoa com o link entra automaticamente</option>
+                            <option value="invite_approval">Quem possuir o link precisa de aprovação</option>
+                            <option value="invite_nominal">Somente pessoas convidadas nominalmente</option>
+                          </select>
+                        </div>
+
+                        {/* Nominal Invites management (only shown if invite_nominal) */}
+                        {selectedChallenge.joinCriteria === "invite_nominal" && (
+                          <div className="p-3 bg-slate-900 border border-slate-850 rounded-xl space-y-3">
+                            <span className="text-[10px] text-amber-400 font-extrabold uppercase font-mono tracking-wider block">
+                              👥 Convidados Nominais Autorizados
+                            </span>
+                            <div className="flex gap-2">
+                              <input
+                                id="nominal-invite-email-input"
+                                type="text"
+                                placeholder="E-mail ou Apelido cadastrado"
+                                className="flex-1 text-xs bg-slate-950 border border-slate-850 px-3 py-2 text-slate-100 rounded-xl outline-none"
+                                onKeyDown={async (e) => {
+                                  if (e.key === "Enter") {
+                                    const input = e.currentTarget;
+                                    const value = input.value.trim();
+                                    if (!value) return;
+                                    
+                                    try {
+                                      const authHeaders: Record<string, string> = { "Content-Type": "application/json" };
+                                      if (firebaseAuth?.currentUser) {
+                                        const tokenVal = await firebaseAuth.currentUser.getIdToken();
+                                        authHeaders["Authorization"] = `Bearer ${tokenVal}`;
+                                      }
+                                      const res = await fetch(`/api/communities/${selectedChallenge.id}/nominal-invites`, {
+                                        method: "POST",
+                                        headers: authHeaders,
+                                        body: JSON.stringify({ userId: currentUser?.id, email: value })
+                                      });
+                                      if (res.ok) {
+                                        const updated = await res.json();
+                                        setSelectedChallenge(updated.community);
+                                        setLocalCommunities(prev => prev.map(c => c.id === selectedChallenge.id ? updated.community : c));
+                                        input.value = "";
+                                        setAdminMsg("Convidado nominal adicionado!");
+                                        setTimeout(() => setAdminMsg(""), 3000);
+                                      }
+                                    } catch (err) {
+                                      console.error(err);
+                                    }
+                                  }
+                                }}
+                              />
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const input = document.getElementById("nominal-invite-email-input") as HTMLInputElement;
+                                  const value = input?.value.trim();
+                                  if (!value) return;
+                                  
+                                  try {
+                                    const authHeaders: Record<string, string> = { "Content-Type": "application/json" };
+                                    if (firebaseAuth?.currentUser) {
+                                      const tokenVal = await firebaseAuth.currentUser.getIdToken();
+                                      authHeaders["Authorization"] = `Bearer ${tokenVal}`;
+                                    }
+                                    const res = await fetch(`/api/communities/${selectedChallenge.id}/nominal-invites`, {
+                                      method: "POST",
+                                      headers: authHeaders,
+                                      body: JSON.stringify({ userId: currentUser?.id, email: value })
+                                    });
+                                    if (res.ok) {
+                                      const updated = await res.json();
+                                      setSelectedChallenge(updated.community);
+                                      setLocalCommunities(prev => prev.map(c => c.id === selectedChallenge.id ? updated.community : c));
+                                      if (input) input.value = "";
+                                      setAdminMsg("Convidado nominal adicionado!");
+                                      setTimeout(() => setAdminMsg(""), 3000);
+                                    }
+                                  } catch (err) {
+                                    console.error(err);
+                                  }
+                                }}
+                                className="p-2 px-3 bg-indigo-650 hover:bg-indigo-600 text-white font-bold text-xs rounded-xl transition cursor-pointer"
+                              >
+                                Add
+                              </button>
+                            </div>
+                            <p className="text-[9px] text-slate-500 leading-tight">
+                              Apenas estas pessoas conseguirão entrar na comunidade com o link de convite.
+                            </p>
+
+                            {/* List of currently nominal invites */}
+                            {selectedChallenge.nominalInvites && selectedChallenge.nominalInvites.length > 0 ? (
+                              <div className="space-y-1.5 max-h-[120px] overflow-y-auto pr-1 pt-1 border-t border-slate-850">
+                                {selectedChallenge.nominalInvites.map((email: string) => (
+                                  <div key={email} className="flex justify-between items-center bg-slate-950 p-1.5 px-2.5 rounded-lg border border-slate-850 text-[10px]">
+                                    <span className="font-mono text-pink-400 font-bold truncate pr-2">{email}</span>
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        try {
+                                          const authHeaders: Record<string, string> = { "Content-Type": "application/json" };
+                                          if (firebaseAuth?.currentUser) {
+                                            const tokenVal = await firebaseAuth.currentUser.getIdToken();
+                                            authHeaders["Authorization"] = `Bearer ${tokenVal}`;
+                                          }
+                                          const res = await fetch(`/api/communities/${selectedChallenge.id}/nominal-invites`, {
+                                            method: "DELETE",
+                                            headers: authHeaders,
+                                            body: JSON.stringify({ userId: currentUser?.id, email })
+                                          });
+                                          if (res.ok) {
+                                            const updated = await res.json();
+                                            setSelectedChallenge(updated.community);
+                                            setLocalCommunities(prev => prev.map(c => c.id === selectedChallenge.id ? updated.community : c));
+                                            setAdminMsg("Convidado removido!");
+                                            setTimeout(() => setAdminMsg(""), 3000);
+                                          }
+                                        } catch (err) {
+                                          console.error(err);
+                                        }
+                                      }}
+                                      className="text-rose-400 hover:text-rose-350 font-bold uppercase text-[8px] cursor-pointer"
+                                    >
+                                      Remover
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-[9px] text-slate-500 text-center">Nenhum convidado nominal cadastrado ainda.</p>
+                            )}
+                          </div>
+                        )}
+
+                        {/* List of history: who joined via link */}
+                        <div className="p-3 bg-slate-900 border border-slate-850 rounded-xl space-y-3">
+                          <span className="text-[10px] text-slate-400 font-extrabold uppercase font-mono tracking-wider block">
+                            📋 Histórico de Entradas via Link
+                          </span>
+                          {selectedChallenge.invitationHistory && selectedChallenge.invitationHistory.length > 0 ? (
+                            <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
+                              {selectedChallenge.invitationHistory.map((item: any, idx: number) => (
+                                <div key={idx} className="p-2.5 bg-slate-950 rounded-xl border border-slate-850/60 text-[10px] space-y-1 text-left font-sans">
+                                  <div className="flex justify-between items-center">
+                                    <strong className="text-slate-200">{item.userName}</strong>
+                                    <span className="text-slate-500 text-[8px] font-mono">
+                                      {new Date(item.joinedAt).toLocaleDateString()} {new Date(item.joinedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between items-center text-[9px]">
+                                    <span className="text-slate-450 font-mono">Token: <span className="text-indigo-400 font-bold">{item.inviteToken}</span></span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleKickMember(item.userId)}
+                                      className="text-rose-405 hover:text-rose-400 font-bold text-[8px] uppercase tracking-wider flex items-center gap-0.5 cursor-pointer"
+                                    >
+                                      <UserX className="w-2.5 h-2.5" /> Revogar Acesso
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[9px] text-slate-500 text-center">Ninguém entrou via link de convite ainda.</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Critical Area: Delete Community */}
+                      <div className="bg-rose-955/10 border border-rose-900/30 p-4.5 rounded-2xl text-left space-y-3.5">
+                        <h4 className="text-xs font-bold text-rose-350 uppercase tracking-wider flex items-center gap-1.5 border-b border-rose-955/20 pb-2">
+                          ⚠️ Zona de Perigo Crítica
+                        </h4>
+                        <p className="text-[10px] text-rose-455 leading-relaxed">A exclusão apagará permanentemente todos os registros, eventos, arquivos, mural de avisos e bate-papos deste desafio.</p>
+                        <button
+                          onClick={handleDeleteCommunity}
+                          className="w-full py-2 bg-rose-900 hover:bg-rose-850 text-white font-extrabold text-[10px] rounded-xl transition cursor-pointer flex items-center justify-center gap-1 shadow"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          <span>EXCLUIR CAMPANHA DEFINITIVAMENTE</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 🏅 HALL OF CONSTANCY TAB */}
+              {activeTab === "constancy_hall" && (
+                <div className="space-y-4">
+                  <div className="border-b border-slate-850 pb-2 mb-2 text-left">
+                    <h3 className="text-xs font-extrabold uppercase text-slate-350 tracking-wider font-heading">Hall da Constância do Desafio</h3>
+                    <p className="text-[11px] text-slate-500">Acompanhe a constância de Daimoku e Exercícios Físicos dos membros deste grupo.</p>
+                  </div>
+                  <ConstancyHall
+                    users={users}
+                    activities={activities}
+                    onSelectUser={() => {}}
+                    communityId={selectedChallenge.id}
+                  />
+                </div>
+              )}
+
+              {/* ✨ VICTORY STORY MURAL TAB */}
+              {activeTab === "mural_vitorias" && (
+                <div className="space-y-4">
+                  <div className="border-b border-slate-850 pb-2 mb-2 text-left">
+                    <h3 className="text-xs font-extrabold uppercase text-slate-350 tracking-wider font-heading">Mural de Vitórias & Benefícios</h3>
+                    <p className="text-[11px] text-slate-500">Compartilhe e celebre relatos inspiradores e vitórias inabaláveis conquistadas pelos membros deste desafio.</p>
+                  </div>
+                  <MuralVitorias
+                    currentUser={currentUser}
+                    onSelectUser={() => {}}
+                    firebaseAuth={firebaseAuth}
+                    communityId={selectedChallenge.id}
+                  />
                 </div>
               )}
 
